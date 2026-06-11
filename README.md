@@ -53,15 +53,22 @@ Do not share:
 
 1. Install Python 3.11+.
 2. Clone the repo.
-3. Open the folder in Codex.
-4. Confirm the CLI works:
+3. Open PowerShell in the repo folder.
+4. Install the Google sync dependencies if you plan to use Google Sheets or Google Drive:
+
+```powershell
+python -m pip install -r .\requirements-google-drive-sync.txt
+```
+
+5. Open the folder in Codex.
+6. Confirm the CLI works:
 
 ```powershell
 python .\job_search_assistant.py -h
 ```
 
-5. Fill in the profile and voice files with your real background.
-6. Read the checklist in `PERSONALIZATION_CHECKLIST.md`.
+7. Fill in the profile and voice files with your real background.
+8. Read the checklist in `PERSONALIZATION_CHECKLIST.md`.
 
 ## Basic Usage
 
@@ -99,46 +106,107 @@ python .\job_search_assistant.py application-packet --id 1 --skip-google-sync
 
 The template does not point at any live Google Sheet or Drive folder by default.
 
-If you want a live Google Sheet command center:
+If you want the fastest first success, set up Google Sheets first and leave Google Drive for later.
 
-1. Create a blank Google Sheet at [sheets.new](https://sheets.new) and name it something like `Job Search CRM`.
-2. Copy the spreadsheet URL.
-3. In your own Google Cloud project, enable the Google Sheets API.
-4. If you also want Google Drive packet sync later, enable the Google Drive API too.
-5. Configure OAuth consent and create a Desktop app OAuth client.
-6. Save the downloaded OAuth client JSON to `secrets/google-oauth-client.json`.
-7. Install dependencies:
+### Google Sheets OAuth Setup
 
-```powershell
-python -m pip install -r .\requirements-google-drive-sync.txt
+1. Go to [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project or choose an existing one you control.
+3. Enable the Google Sheets API for that project.
+4. If you want Google Drive packet sync later, enable the Google Drive API too.
+5. Open `APIs & Services` -> `OAuth consent screen`.
+6. Choose `External` unless you have a specific reason to use `Internal`.
+7. Fill in the basic app name and email fields, then save.
+8. Open `APIs & Services` -> `Credentials`.
+9. Choose `Create Credentials` -> `OAuth client ID`.
+10. For application type, choose `Desktop app`.
+11. Download the JSON file.
+12. Put that file at `secrets/google-oauth-client.json`.
+
+The repo expects this exact path:
+
+```text
+secrets/google-oauth-client.json
 ```
 
-8. Run the first live sheet sync with your own spreadsheet URL:
+If `secrets\` does not exist yet, create it first.
+
+### First Live Sheet Sync
+
+1. Create a blank Google Sheet at [sheets.new](https://sheets.new).
+2. Name it something like `Job Search CRM`.
+3. Copy the spreadsheet URL from the browser.
+4. Run this command with your own sheet URL:
 
 ```powershell
 python .\job_search_assistant.py sync-google-sheets-workbook --spreadsheet-url "https://docs.google.com/spreadsheets/d/<YOUR_SHEET_ID>/edit" --auth-mode oauth
 ```
 
-The first OAuth run opens a browser, asks you to approve access, writes `secrets/google-oauth-token.json`, and creates the missing workbook tabs automatically inside the blank spreadsheet.
+What should happen on the first run:
 
-9. If you also want Google Drive packet and cover-letter sync, pass your own Drive folder URLs explicitly:
+- a browser window opens for Google login and consent
+- Google asks you to approve access
+- the repo writes `secrets/google-oauth-token.json`
+- the tool creates the workbook tabs for you
+- the tool pushes the current local workbook data into the sheet
 
-```powershell
-python .\job_search_assistant.py sync-google-drive-docs --packet-folder-url "https://drive.google.com/drive/folders/<YOUR_PACKET_FOLDER_ID>" --cover-letter-folder-url "https://drive.google.com/drive/folders/<YOUR_COVER_LETTER_FOLDER_ID>" --auth-mode oauth
-```
+You do not need to pre-create tabs manually.
 
-10. After that is working, you can use the wrapper for the full daily flow:
+### After Google Sheets Works
+
+Once that first sync succeeds, these files should exist:
+
+- `secrets/google-oauth-client.json`
+- `secrets/google-oauth-token.json`
+
+You can then use the daily wrapper:
 
 ```powershell
 .\scripts\run_daily_job_search.ps1 --spreadsheet-url "https://docs.google.com/spreadsheets/d/<YOUR_SHEET_ID>/edit" --sheet-auth-mode oauth
 ```
 
-If you are staying local-only, keep using `python .\job_search_assistant.py daily-run --skip-sheet-sync`.
+If you only want local tracking, keep using:
 
-For packet creation after Drive sync is configured, use:
+```powershell
+python .\job_search_assistant.py daily-run --skip-sheet-sync
+```
+
+### Optional Google Drive Packet Sync
+
+Only do this after Sheets OAuth is already working.
+
+1. Create or choose one Google Drive folder for packet docs.
+2. Create or choose one Google Drive folder for cover-letter docs.
+3. Copy both folder URLs from the browser.
+4. Run:
+
+```powershell
+python .\job_search_assistant.py sync-google-drive-docs --packet-folder-url "https://drive.google.com/drive/folders/<YOUR_PACKET_FOLDER_ID>" --cover-letter-folder-url "https://drive.google.com/drive/folders/<YOUR_COVER_LETTER_FOLDER_ID>" --auth-mode oauth
+```
+
+After that succeeds, use:
 
 ```powershell
 .\scripts\generate_packet_and_mirror.ps1 -JobId <JOB_ID>
+```
+
+### Common New-User Checks
+
+- `python .\job_search_assistant.py -h` works
+- `secrets/google-oauth-client.json` exists
+- the first sheet sync opens a browser
+- `secrets/google-oauth-token.json` appears after consent
+- the target Google Sheet gets tabs created automatically
+
+### Local-Only Mode
+
+You do not need Google at all to use the core workflow.
+
+Use these when you want to stay local:
+
+```powershell
+python .\job_search_assistant.py daily-run --skip-sheet-sync
+python .\job_search_assistant.py application-packet --id 1 --skip-google-sync
 ```
 
 Official Google setup references:

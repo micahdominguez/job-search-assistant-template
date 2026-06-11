@@ -32,9 +32,19 @@ The easiest setup is:
 1. Open [sheets.new](https://sheets.new).
 2. Name the blank spreadsheet `Job Search CRM` or whatever you prefer.
 3. Copy the spreadsheet URL.
-4. Set up OAuth credentials in your own Google Cloud project and save the desktop client JSON to `secrets/google-oauth-client.json`.
-5. Install the Google sync dependencies.
-6. Run:
+4. Open [Google Cloud Console](https://console.cloud.google.com/).
+5. Create a Google Cloud project or use one you already control.
+6. Enable the Google Sheets API.
+7. Open `APIs & Services` -> `OAuth consent screen`.
+8. Choose `External` unless you know you need another option.
+9. Fill in the required basic app details and save.
+10. Open `APIs & Services` -> `Credentials`.
+11. Create an `OAuth client ID`.
+12. Choose application type `Desktop app`.
+13. Download the OAuth client JSON.
+14. Put that file at `secrets/google-oauth-client.json`.
+15. Install the Google sync dependencies.
+16. Run:
 
 ```powershell
 python .\job_search_assistant.py sync-google-sheets-workbook --spreadsheet-url "https://docs.google.com/spreadsheets/d/<YOUR_SHEET_ID>/edit" --auth-mode oauth
@@ -48,6 +58,12 @@ On the first run, the tool will:
 - push the current local workbook data into the sheet
 
 You do **not** need to pre-create the tabs manually.
+
+If the browser does not open, stop and verify that:
+
+- `secrets/google-oauth-client.json` exists
+- the JSON came from a `Desktop app` OAuth client
+- the Google Sheets API is enabled in the same project
 
 ## Useful Commands
 
@@ -110,6 +126,12 @@ Store personal credentials in:
 - `secrets/google-oauth-client.json`
 - `secrets/google-oauth-token.json`
 - `secrets/google-service-account.json`
+
+For most new users:
+
+- start with `google-oauth-client.json`
+- let the app create `google-oauth-token.json` on first login
+- ignore `google-service-account.json` unless you have a specific shared-drive or automation reason
 
 Install Google sync dependencies only if you need Sheets or Drive sync:
 
