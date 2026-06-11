@@ -2,6 +2,8 @@
 
 The local SQLite database remains the durable source of truth. The `Jobs` tab is the command center for manual review.
 
+If you connect Google Sheets, the workbook is meant to recreate the day-to-day working view of the app in spreadsheet form. It is not just a raw export. It is the tab-based workspace where you review job leads, check fit scores, open job links, track follow-ups, and see packet progress in one place.
+
 ## Workbook Tabs
 
 - `Jobs` - master list, one row per opportunity

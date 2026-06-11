@@ -1,20 +1,34 @@
 # Job Search Automation CRM Template
 
-This template is for building a personal job search automation CRM.
+This template is for building a personal job search automation CRM that helps find jobs for you and take the busy work out of applying.
 
-In plain English, it helps one person keep track of job leads, organize follow-ups, generate application materials, and optionally sync the whole workflow to Google Sheets and Google Drive.
+In plain English, the system is built to search for job leads that match your background, score them for fit, save them in a spreadsheet-style CRM, and help generate the follow-up materials you need to apply.
 
 You do not need to be a developer to use it. There are still a few technical setup steps, but the goal is to give you a working system for your job search, not to make you learn engineering first.
 
 ## What This Template Does
 
-- saves jobs in one place
-- helps score and prioritize roles
+- searches for new job leads tailored to your background
+- scores jobs with a fit score so you can focus on stronger matches first
+- saves job leads into a spreadsheet-style CRM with links back to the original posting
 - tracks your pipeline like a personal CRM
 - stores notes, follow-ups, and application history
-- generates application packets and cover letters
-- can sync your tracker to Google Sheets
+- generates job packets with job details, application notes, and question support
+- generates cover letters
+- can sync your tracker to Google Sheets with the same tab-based working view
 - can sync packet documents to Google Drive
+
+## What The Main Workflow Looks Like
+
+The main job of this system is:
+
+1. find jobs that fit your background
+2. score those jobs so the best ones rise to the top
+3. place them into a spreadsheet-style CRM with links and workflow tabs
+4. help create packet notes, question answers, and a cover letter
+5. reduce the repetitive admin work around job hunting
+
+If you use Google Sheets, the workbook tabs are meant to recreate the working experience of the app in a format that feels easy to review every day.
 
 ## Best Way To Use This README
 
@@ -132,6 +146,21 @@ Generate a local-only packet without Google sync:
 ```powershell
 python .\job_search_assistant.py application-packet --id 1 --skip-google-sync
 ```
+
+## What You Get In Google Sheets
+
+If you connect Google Sheets, the app can recreate the working tracker experience in a spreadsheet with tabs like:
+
+- `Jobs`
+- `Top Today`
+- `Applied`
+- `Follow Ups`
+- `Packets`
+- `Applications`
+- `Contacts`
+- `Correspondence`
+
+That sheet is meant to give you a familiar daily operating view: new leads, fit scores, job links, statuses, follow-ups, and packet progress all in one place.
 
 ## Google Setup
 
