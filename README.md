@@ -1,60 +1,54 @@
-﻿# Personal Job Search Assistant Template
+# Job Search Automation CRM Template
 
-This is a sanitized starter repo for running the local-first job search workflow with your own profile, packet voice, CRM data, and Google setup.
+This template is for building a personal job search automation CRM.
 
-## What This Template Includes
+In plain English, it helps one person keep track of job leads, organize follow-ups, generate application materials, and optionally sync the whole workflow to Google Sheets and Google Drive.
 
-- Python CLI for job evaluation, CRM tracking, exports, and optional Google sync
-- Starter profile and voice files that you should replace with your own data
-- Google Sheets command-center workflow
-- Packet-writing instructions and sample scaffolding
-- A personalization checklist so you can safely adapt it before real usage
+You do not need to be a developer to use it. There are still a few technical setup steps, but the goal is to give you a working system for your job search, not to make you learn engineering first.
 
-## What You Should Customize First
+## What This Template Does
 
-Before using this seriously, replace:
+- saves jobs in one place
+- helps score and prioritize roles
+- tracks your pipeline like a personal CRM
+- stores notes, follow-ups, and application history
+- generates application packets and cover letters
+- can sync your tracker to Google Sheets
+- can sync packet documents to Google Drive
 
-- `profile.md`
-- `profile.json`
-- `voice_application_style.md`
-- `voice_application_style.json`
+## Best Way To Use This README
+
+If you are new, follow this order:
+
+1. Get the repo running locally.
+2. Add your own basic background information.
+3. Test one simple local command.
+4. Set up Google Sheets if you want a live spreadsheet.
+5. Set up Google Drive only after Sheets works.
+
+That order keeps the setup from getting overwhelming.
+
+## What The Main Files Mean
+
+You do not need to memorize these right away. This is just the simple version:
+
+- `profile.md` and `profile.json`
+  These store your background, goals, and contact information.
+- `voice_application_style.md` and `voice_application_style.json`
+  These help the tool learn how your application writing should sound.
 - `packet_writing_training_samples.md`
+  This is where you can store good past writing samples.
 - `JOB_FINDER_SYSTEM_PROMPT.md`
+  This helps shape how the system thinks about good job matches.
 
-If you want to use application packet generation heavily, also run:
-
-```powershell
-.\scripts\find_personalization_hotspots.ps1
-```
-
-That will show remaining candidate-tuned fallback text inside `job_search_assistant.py` that should be reviewed for your background.
-
-## Recommended Sharing Model
-
-Use this as a **GitHub template repo**.
-
-Recommended flow:
-
-1. Push this folder to a GitHub repo.
-2. Mark the repo as a GitHub template.
-3. Have each person create their own repo from the template.
-4. Each person fills in their own profile, voice, samples, and secrets locally.
-
-Public is fine once the template is sanitized. If you are still checking for personal traces, keep it private until that review is done.
-
-Do not share:
-
-- `secrets/`
-- `data/`
-- `exports/`
-- `job_packets/`
+If you want the lightest possible start, focus on `profile.md` and `profile.json` first.
 
 ## First-Time Setup
 
 1. Install Python 3.11+.
 2. Clone the repo.
 3. Open PowerShell in the repo folder.
-4. Install the Google sync dependencies if you plan to use Google Sheets or Google Drive:
+4. If you plan to use Google Sheets or Google Drive, install the Google sync dependencies:
 
 ```powershell
 python -m pip install -r .\requirements-google-drive-sync.txt
@@ -67,27 +61,64 @@ python -m pip install -r .\requirements-google-drive-sync.txt
 python .\job_search_assistant.py -h
 ```
 
-7. Fill in the profile and voice files with your real background.
-8. Read the checklist in `PERSONALIZATION_CHECKLIST.md`.
+## First Personalization Pass
 
-## Basic Usage
+Before worrying about advanced features, do this:
 
-Evaluate pasted text:
+1. Open `profile.md`.
+2. Replace the placeholder background with your real background.
+3. Open `profile.json`.
+4. Replace the placeholder contact info and summary with your own.
+5. If you want better writing quality later, update `voice_application_style.md` and `voice_application_style.json`.
+
+That is enough to get started.
+
+You do not need to fully understand every file before your first test.
+
+If you plan to use packet generation heavily later, run this after your first setup pass:
+
+```powershell
+.\scripts\find_personalization_hotspots.ps1
+```
+
+That script points out remaining example text inside `job_search_assistant.py` that should be adjusted to better match your own background.
+
+## First Local Test
+
+Try these in order:
+
+Show the help menu:
+
+```powershell
+python .\job_search_assistant.py -h
+```
+
+Evaluate a simple example:
 
 ```powershell
 python .\job_search_assistant.py evaluate --text "Strategic Account Manager role owning renewals, expansion, executive stakeholders, and enterprise accounts."
-```
-
-Import a job analysis you prepared elsewhere:
-
-```powershell
-Get-Clipboard | python .\job_search_assistant.py import-chatgpt-job
 ```
 
 Show the pipeline:
 
 ```powershell
 python .\job_search_assistant.py pipeline --min-score 70
+```
+
+Run a simple local-only refresh:
+
+```powershell
+python .\job_search_assistant.py daily-run --skip-sheet-sync
+```
+
+If those work, the local setup is in good shape.
+
+## Basic Usage
+
+Import a job analysis you prepared elsewhere:
+
+```powershell
+Get-Clipboard | python .\job_search_assistant.py import-chatgpt-job
 ```
 
 Generate a packet after you finish personalization:
@@ -106,7 +137,7 @@ python .\job_search_assistant.py application-packet --id 1 --skip-google-sync
 
 The template does not point at any live Google Sheet or Drive folder by default.
 
-If you want the fastest first success, set up Google Sheets first and leave Google Drive for later.
+If you want the easiest first success, set up Google Sheets first and leave Google Drive for later.
 
 ### Google Sheets OAuth Setup
 
@@ -198,7 +229,7 @@ After that succeeds, use:
 - `secrets/google-oauth-token.json` appears after consent
 - the target Google Sheet gets tabs created automatically
 
-### Local-Only Mode
+## Local-Only Mode
 
 You do not need Google at all to use the core workflow.
 
@@ -209,7 +240,27 @@ python .\job_search_assistant.py daily-run --skip-sheet-sync
 python .\job_search_assistant.py application-packet --id 1 --skip-google-sync
 ```
 
-Official Google setup references:
+## Recommended Sharing Model
+
+Use this as a **GitHub template repo** if you want other people to start from it.
+
+Recommended flow:
+
+1. Push this folder to a GitHub repo.
+2. Mark the repo as a GitHub template.
+3. Have each person create their own repo from the template.
+4. Each person fills in their own profile, writing style, samples, and secrets locally.
+
+Public is fine once the template is sanitized. If you are still checking for personal traces, keep it private until that review is done.
+
+Do not share:
+
+- `secrets/`
+- `data/`
+- `exports/`
+- `job_packets/`
+
+## Official Google References
 
 - [Google Sheets API Python quickstart](https://developers.google.com/workspace/sheets/api/quickstart/python)
 - [Google Drive API Python quickstart](https://developers.google.com/workspace/drive/api/quickstart/python)
