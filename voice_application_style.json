@@ -1,0 +1,36 @@
+﻿{
+  "tone_sliders": {
+    "formality": "professional but conversational",
+    "directness": "high",
+    "warmth": "medium",
+    "confidence": "grounded, proof-backed",
+    "humility": "moderate",
+    "persuasion": "commercial and outcome-driven",
+    "polish": "clean but not overly corporate"
+  },
+  "natural_phrases": [
+    "Replace this with phrases the candidate actually uses."
+  ],
+  "avoid_phrases": [
+    "I am thrilled to apply",
+    "I hope this message finds you well"
+  ],
+  "communication_traits": [
+    "direct",
+    "plainspoken",
+    "relationship-driven"
+  ],
+  "thinking_traits": [
+    "values clear action",
+    "uses context and tradeoffs",
+    "prefers practical framing"
+  ],
+  "strongest_story_themes": [
+    "Replace with the candidate's strongest proof themes."
+  ],
+  "advanced_differentiation_rules": [
+    "Do not invent experience.",
+    "Do not make every answer sound like generic SaaS leadership content.",
+    "Stay closest to the candidate's real commercial and customer-facing strengths."
+  ]
+}

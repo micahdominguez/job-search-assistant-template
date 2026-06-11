@@ -1,0 +1,105 @@
+﻿{
+  "name": "Your Name",
+  "contact": {
+    "email": "you@example.com",
+    "phone": "555-555-5555",
+    "linkedin": "https://www.linkedin.com/in/your-linkedin/",
+    "telegram": "@yourhandle",
+    "location": "Your City, State"
+  },
+  "headline": "Strategic Account Management | Partnerships | Customer Growth",
+  "background_summary": "Replace this with a factual summary of your background, strongest markets, and clearest revenue or relationship ownership proof.",
+  "search_mission": {
+    "objective": "Identify high-leverage opportunities where I have strong strategic fit and a clear value story.",
+    "optimize_for": [
+      "interviews",
+      "warm networking paths",
+      "high-quality opportunities",
+      "long-term trajectory"
+    ],
+    "avoid": [
+      "application volume for its own sake",
+      "generic Easy Apply spam",
+      "roles outside my real strengths"
+    ]
+  },
+  "linkedin_top_skills": [
+    "Account Management",
+    "Partnerships",
+    "Customer Growth"
+  ],
+  "roles": [
+    {
+      "title": "Most Recent Role",
+      "company": "Your Company",
+      "years": "2023-Present",
+      "impact": [
+        "Replace with a factual outcome tied to revenue, customer ownership, or partnerships.",
+        "Replace with a factual example of cross-functional delivery, retention, or expansion."
+      ],
+      "skills": [
+        "account management",
+        "renewals",
+        "expansion",
+        "stakeholder management"
+      ]
+    }
+  ],
+  "earlier_relevant_roles": [
+    {
+      "title": "Earlier Relevant Role",
+      "company": "Earlier Company",
+      "years": "2020-2023",
+      "impact": [
+        "Replace with factual proof from earlier relevant experience."
+      ],
+      "skills": [
+        "partnerships",
+        "business development",
+        "commercial execution"
+      ]
+    }
+  ],
+  "skills": {
+    "expert": [
+      "Relationship ownership",
+      "Commercial communication"
+    ],
+    "strong": [
+      "Renewals",
+      "Expansion",
+      "Cross-functional execution"
+    ],
+    "working": [
+      "AI workflow design",
+      "Structured account planning"
+    ]
+  },
+  "personal_domain_affinity": {
+    "example_domain": {
+      "bonus_points": 2,
+      "signals": [
+        "Replace with genuine domain-interest signals that are true."
+      ],
+      "guardrail": "Use this as authentic curiosity only, not fake expertise."
+    }
+  },
+  "education": {
+    "degrees": [],
+    "certifications": []
+  },
+  "target_job_profile": {
+    "dream_titles": [
+      "Strategic Account Manager",
+      "Senior Account Manager",
+      "Partnerships Lead"
+    ],
+    "adjacent_titles": [
+      "Customer Success Lead",
+      "Commercial Lead",
+      "Business Development Lead"
+    ],
+    "comp_floor_base": 100000,
+    "comp_ceiling_base": 220000
+  }
+}

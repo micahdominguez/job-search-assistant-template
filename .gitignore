@@ -1,0 +1,21 @@
+﻿__pycache__/
+*.py[cod]
+
+# Local runtime state
+data/
+exports/
+jobs/
+job_packets/
+tmp/
+job_search.db
+
+# Personal source documents
+Linkedin_Profile.pdf
+resume/
+
+# Secrets and local env files
+.env
+.env.*
+.venv/
+venv/
+secrets/
