@@ -1,4 +1,4 @@
-﻿$root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $root
 
 Write-Host ""

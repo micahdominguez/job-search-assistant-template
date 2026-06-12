@@ -1,4 +1,4 @@
-﻿# Project Runbook
+# Project Runbook
 
 Use this file to start fresh Codex chats quickly and keep the work focused.
 

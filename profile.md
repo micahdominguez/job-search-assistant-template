@@ -1,4 +1,4 @@
-﻿# Job Search Profile Briefing
+# Job Search Profile Briefing
 
 Replace this file with the candidate's real background.
 

@@ -1,4 +1,4 @@
-﻿# Personalization Checklist
+# Personalization Checklist
 
 ## Before Real Use
 

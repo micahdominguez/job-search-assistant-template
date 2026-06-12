@@ -1,4 +1,4 @@
-﻿# Packet Writing Training Samples
+# Packet Writing Training Samples
 
 Use this file to store strong raw examples before distilling them into permanent style rules.
 
@@ -35,4 +35,3 @@ Patterns to learn:
 - 
 
 Answer:
-

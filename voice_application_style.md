@@ -1,4 +1,4 @@
-﻿# Voice and Application Style Dossier
+# Voice and Application Style Dossier
 
 Replace this file with notes about how the candidate actually sounds.
 

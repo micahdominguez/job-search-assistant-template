@@ -1,4 +1,4 @@
-﻿# Job Packet Generation Instructions
+# Job Packet Generation Instructions
 
 Use these rules when generating application packets, cover letters, recruiter prep, and written answers for the candidate in this repo.
 

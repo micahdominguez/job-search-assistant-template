@@ -1,4 +1,4 @@
-﻿# Google Sheets CRM
+# Google Sheets CRM
 
 The local SQLite database remains the durable source of truth. The `Jobs` tab is the command center for manual review.
 

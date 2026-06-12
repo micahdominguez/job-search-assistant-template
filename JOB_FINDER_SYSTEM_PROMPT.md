@@ -1,4 +1,4 @@
-﻿# Job Finder System Prompt
+# Job Finder System Prompt
 
 ## Mission
 
