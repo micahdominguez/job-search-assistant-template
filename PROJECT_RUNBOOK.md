@@ -39,6 +39,7 @@ Tell a new Codex chat to read only these files first:
 Only after that should it open:
 
 - `job_search_assistant.py`
+- `job_sources.json`
 - `application_question_overrides.json`
 - specific `job_packets/job-*/` folders relevant to the task
 
@@ -67,16 +68,23 @@ Save to `GOOGLE_SHEETS.md` when it affects statuses, tabs, sync behavior, or wor
 
 Save to `README.md` when a new machine or new collaborator would need it.
 
+Save to `job_sources.json` when a user wants to add or disable recurring job boards, portfolio boards, or company career pages without editing Python.
+
 ## Daily Commands
 
 ```powershell
 python .\job_search_assistant.py daily-run --skip-sheet-sync
 .\scripts\run_daily_job_search.ps1 --spreadsheet-url "https://docs.google.com/spreadsheets/d/<YOUR_SHEET_ID>/edit" --sheet-auth-mode oauth
+python .\job_search_assistant.py source-jobs --source-config .\job_sources.json
+python .\job_search_assistant.py browser-follow-up-status --latest
+python .\job_search_assistant.py complete-browser-follow-up --latest --source "<SOURCE_NAME>" --note "<WHAT_CHROME_CHECKED>"
 python .\job_search_assistant.py pipeline --min-score 90 --limit 20
 python .\job_search_assistant.py followups --days 7
 Get-Clipboard | python .\job_search_assistant.py import-chatgpt-job
 .\scripts\generate_packet_and_mirror.ps1 -JobId <JOB_ID>
 ```
+
+For daily sourcing, run the normal CLI sweep first, then use Chrome for any sources listed by `browser-follow-up-status --latest`. Start each source in a fresh Chrome tab, add only true net-new roles that improve the board, generate packets for those keeps, resync the workbook, and mark checked sources with `complete-browser-follow-up`.
 
 ## New Chat Helper
 

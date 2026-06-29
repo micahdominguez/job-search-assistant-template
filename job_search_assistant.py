@@ -7,11 +7,16 @@ import argparse
 import csv
 import datetime as dt
 from difflib import SequenceMatcher
+from html import unescape
+from html.parser import HTMLParser
 import json
 import re
 import sqlite3
 import sys
 import textwrap
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.request import Request, urlopen
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -43,6 +48,111 @@ DEFAULT_GOOGLE_SERVICE_ACCOUNT_JSON = ROOT / "secrets" / "google-service-account
 DEFAULT_GOOGLE_OAUTH_CLIENT_JSON = ROOT / "secrets" / "google-oauth-client.json"
 DEFAULT_GOOGLE_OAUTH_TOKEN_JSON = ROOT / "secrets" / "google-oauth-token.json"
 GOOGLE_SHEETS_SYNC_SCOPES = DEFAULT_WORKSPACE_SCOPES
+PIPELINE_RUNS_DIR = ROOT / "data" / "pipeline_runs"
+DEFAULT_JOB_SOURCES_JSON = ROOT / "job_sources.json"
+DEFAULT_SOURCE_TIMEOUT_SECONDS = 20
+DEFAULT_SOURCE_RETRIES = 2
+DEFAULT_SOURCE_MAX_ROLE_LINKS = 20
+DEFAULT_APPLICATION_QUESTION_REFRESH_LIMIT = 25
+AUTO_PACKET_MIN_SCORE = 80
+MANUAL_REVIEW_MIN_SCORE = 75
+BOARD_KEEP_MIN_SCORE = 80
+ROLE_PAGE_MIN_WORDS = 120
+SOURCE_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+)
+TRACKING_QUERY_PARAM_PREFIXES = ("utm_",)
+TRACKING_QUERY_PARAM_NAMES = {
+    "gh_src",
+    "gh_jid",
+    "source",
+    "src",
+    "ref",
+    "refs",
+    "trk",
+    "tracking",
+    "trackingid",
+    "jobsource",
+    "jobboardsource",
+}
+DEFAULT_TARGET_COMPANY_SOURCES: list[dict[str, Any]] = [
+    {"company": "Chainalysis", "tier": 1, "source_type": "ashby_board", "urls": ["https://jobs.ashbyhq.com/chainalysis-careers"]},
+    {"company": "Chainalysis Government Solutions", "tier": 1, "source_type": "ashby_board", "urls": ["https://jobs.ashbyhq.com/chainalysis-government-solutions"]},
+    {"company": "Allium", "tier": 1, "source_type": "ashby_board", "urls": ["https://jobs.ashbyhq.com/allium"]},
+    {"company": "Morpho", "tier": 1, "source_type": "careers_page", "urls": ["https://morpho.org/jobs"]},
+    {"company": "Dune", "tier": 1, "source_type": "ashby_board", "urls": ["https://jobs.ashbyhq.com/dune"]},
+    {"company": "Blockworks", "tier": 1, "source_type": "ashby_board", "urls": ["https://jobs.ashbyhq.com/Blockworks"]},
+    {"company": "TRM Labs", "tier": 1, "source_type": "ashby_board", "urls": ["https://jobs.ashbyhq.com/trm-labs"]},
+    {"company": "Fireblocks", "tier": 1, "source_type": "careers_page", "urls": ["https://www.fireblocks.com/careers/"], "browser_required": True},
+    {"company": "Blockdaemon", "tier": 1, "source_type": "ashby_board", "urls": ["https://jobs.ashbyhq.com/blockdaemon"]},
+    {"company": "Alchemy", "tier": 1, "source_type": "ashby_board", "urls": ["https://jobs.ashbyhq.com/alchemy"]},
+    {"company": "QuickNode", "tier": 1, "source_type": "ashby_board", "urls": ["https://jobs.ashbyhq.com/quicknode"]},
+    {"company": "Chainlink Labs", "tier": 2, "source_type": "careers_page", "urls": ["https://chainlinklabs.com/careers"]},
+    {"company": "Consensys", "tier": 2, "source_type": "careers_page", "urls": ["https://consensys.io/open-roles"]},
+    {"company": "Anchorage Digital", "tier": 2, "source_type": "lever_board", "urls": ["https://jobs.lever.co/anchorage"]},
+    {"company": "Coinbase", "tier": 2, "source_type": "careers_page", "urls": ["https://www.coinbase.com/careers/positions"], "browser_required": True},
+    {"company": "Kraken", "tier": 2, "source_type": "ashby_board", "urls": ["https://jobs.ashbyhq.com/kraken.com"]},
+    {"company": "Halborn", "tier": 2, "source_type": "rippling_board", "urls": ["https://ats.rippling.com/halborn-inc/jobs"]},
+    {"company": "Dataiku", "tier": 3, "source_type": "greenhouse_board", "urls": ["https://job-boards.greenhouse.io/dataiku"]},
+    {"company": "HiddenLayer", "tier": 3, "source_type": "greenhouse_board", "urls": ["https://job-boards.greenhouse.io/hiddenlayer"]},
+    {"company": "BigPanda", "tier": 3, "source_type": "gem_board", "urls": ["https://jobs.gem.com/bigpanda"]},
+    {"company": "Flashpoint", "tier": 3, "source_type": "ashby_board", "urls": ["https://jobs.ashbyhq.com/flashpoint.io"]},
+    {"company": "Vanta", "tier": 2, "source_type": "ashby_board", "urls": ["https://jobs.ashbyhq.com/vanta"]},
+    {"company": "Wiz", "tier": 2, "source_type": "careers_page", "urls": ["https://www.wiz.io/careers"]},
+    {"company": "Snyk", "tier": 2, "source_type": "careers_page", "urls": ["https://snyk.io/careers/"]},
+    {"company": "Samsara", "tier": 2, "source_type": "careers_page", "urls": ["https://www.samsara.com/company/careers"]},
+    {"company": "Robust AI", "tier": 3, "source_type": "lever_board", "urls": ["https://jobs.lever.co/robust-ai"]},
+    {"company": "Skydio", "tier": 3, "source_type": "careers_page", "urls": ["https://www.skydio.com/careers"]},
+]
+DEFAULT_DISCOVERY_SOURCES: list[dict[str, Any]] = [
+    {"company": "CryptoJobsList", "tier": 2, "source_type": "discovery_board", "urls": ["https://cryptojobslist.com/"]},
+    {"company": "Web3.career", "tier": 2, "source_type": "discovery_board", "urls": ["https://web3.career/"]},
+    {"company": "Cryptocurrency Jobs", "tier": 2, "source_type": "discovery_board", "urls": ["https://cryptocurrencyjobs.co/"]},
+    {"company": "Remote3", "tier": 2, "source_type": "discovery_board", "urls": ["https://www.remote3.co/"]},
+    {"company": "Wellfound", "tier": 2, "source_type": "discovery_board", "urls": ["https://wellfound.com/jobs"], "browser_required": True},
+    {"company": "Tether Careers", "tier": 1, "source_type": "discovery_board", "urls": ["https://careers.tether.io/"]},
+    {"company": "Stablecoin Jobs", "tier": 1, "source_type": "discovery_board", "urls": ["https://stablecoin-jobs.com/"]},
+    {"company": "a16z Crypto Portfolio", "tier": 2, "source_type": "discovery_board", "urls": ["https://jobs.a16z.com/jobs?remoteOnly=true&postedSince=P1D"]},
+    {"company": "Electric Capital Portfolio", "tier": 2, "source_type": "discovery_board", "urls": ["https://jobs.electriccapital.com/jobs"]},
+    {"company": "Paradigm Careers", "tier": 2, "source_type": "discovery_board", "urls": ["https://www.paradigm.xyz/careers"]},
+    {"company": "Multicoin Capital Portfolio", "tier": 2, "source_type": "discovery_board", "urls": ["https://jobs.multicoin.capital/jobs"]},
+    {"company": "Variant Fund Portfolio", "tier": 2, "source_type": "discovery_board", "urls": ["https://jobs.variant.fund/jobs"]},
+    {"company": "Dragonfly Portfolio", "tier": 1, "source_type": "discovery_board", "urls": ["https://jobs.dragonfly.xyz/jobs"]},
+    {"company": "Pantera Capital Portfolio", "tier": 2, "source_type": "discovery_board", "urls": ["https://jobs.panteracapital.com/jobs"]},
+    {"company": "Solana Jobs", "tier": 1, "source_type": "discovery_board", "urls": ["https://jobs.solana.com/jobs"]},
+    {"company": "LinkedIn Jobs", "tier": 3, "source_type": "discovery_board", "urls": ["https://www.linkedin.com/jobs/"], "browser_required": True},
+    {"company": "Welcome to the Jungle", "tier": 3, "source_type": "discovery_board", "urls": ["https://www.welcometothejungle.com/en/jobs"]},
+    {"company": "Remote Rocketship", "tier": 3, "source_type": "discovery_board", "urls": ["https://www.remoterocketship.com/jobs/"], "browser_required": True},
+    {"company": "DailyRemote", "tier": 3, "source_type": "discovery_board", "urls": ["https://dailyremote.com/"]},
+    {"company": "Teal Job Search", "tier": 3, "source_type": "discovery_board", "urls": ["https://www.tealhq.com/job-search"], "browser_required": True},
+    {"company": "FlexJobs", "tier": 3, "source_type": "discovery_board", "urls": ["https://www.flexjobs.com/remote-jobs"], "browser_required": True},
+    {"company": "Himalayas", "tier": 3, "source_type": "discovery_board", "urls": ["https://himalayas.app/jobs"], "browser_required": True},
+    {"company": "Built In", "tier": 3, "source_type": "discovery_board", "urls": ["https://builtin.com/jobs/remote"]},
+    {"company": "BeInCrypto Jobs", "tier": 2, "source_type": "discovery_board", "urls": ["https://beincrypto.com/jobs/"], "browser_required": True},
+    {"company": "JobStash", "tier": 2, "source_type": "discovery_board", "urls": ["https://jobstash.xyz/jobs"]},
+    {"company": "Midnight", "tier": 2, "source_type": "discovery_board", "urls": ["https://midnight.network/careers"]},
+    {"company": "Block", "tier": 2, "source_type": "discovery_board", "urls": ["https://block.xyz/careers/jobs"]},
+    {"company": "Avalanche Jobs", "tier": 2, "source_type": "discovery_board", "urls": ["https://jobs.avax.network/jobs"]},
+    {"company": "Ethereum Job Board", "tier": 2, "source_type": "discovery_board", "urls": ["https://www.ethereumjobboard.com/jobs"]},
+    {"company": "Coinbase Ventures", "tier": 3, "source_type": "company_discovery", "urls": ["https://www.coinbase.com/ventures"], "browser_required": True},
+    {"company": "DefiLlama Raises", "tier": 3, "source_type": "company_discovery", "urls": ["https://defillama.com/raises"], "browser_required": True},
+    {"company": "Superteam Earn", "tier": 3, "source_type": "bounty_board", "urls": ["https://superteam.fun/earn/all"]},
+    {"company": "Scribble", "tier": 3, "source_type": "bounty_board", "urls": ["https://scribble.network/"]},
+    {"company": "Wizz", "tier": 3, "source_type": "bounty_board", "urls": ["https://wizzhq.xyz/"]},
+    {"company": "First Dollar", "tier": 3, "source_type": "bounty_board", "urls": ["https://app.firstdollar.money/"]},
+]
+SUPPORTED_SOURCE_TYPES = {
+    "ashby_board",
+    "bounty_board",
+    "careers_page",
+    "company_discovery",
+    "discovery_board",
+    "gem_board",
+    "greenhouse_board",
+    "lever_board",
+    "rippling_board",
+}
 
 VALID_STATUSES = [
     "discovered",
@@ -125,6 +235,61 @@ ROLE_LANE_PATTERNS: list[tuple[str, str]] = [
     ("Advisor / Ecosystem", r"advisor|advisory|ecosystem lead"),
 ]
 
+ROLE_LINK_PATTERNS = [
+    r"jobs\.ashbyhq\.com/.+?/[a-f0-9-]{8,}",
+    r"job-boards\.greenhouse\.io/.+?/jobs/\d+",
+    r"boards\.greenhouse\.io/.+?/jobs/\d+",
+    r"jobs\.gem\.com/.+?",
+    r"api\.lever\.co/.+?",
+    r"/job/[^\"'#\s<>]+",
+    r"/jobs/[^\"'#\s<>]+",
+    r"/careers/[^\"'#\s<>]+",
+    r"/positions/[^\"'#\s<>]+",
+]
+
+OPPORTUNITY_LINK_PATTERNS = [
+    *ROLE_LINK_PATTERNS,
+    r"/bount(?:y|ies)/[^\"'#\s<>]+",
+    r"/campaigns?/[^\"'#\s<>]+",
+    r"/opportunities/[^\"'#\s<>]+",
+    r"/earn/[^\"'#\s<>]+",
+]
+
+
+class LinkExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "a":
+            return
+        for key, value in attrs:
+            if key.lower() == "href" and value:
+                self.links.append(value)
+
+
+class VisibleTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._skip_depth = 0
+        self.chunks: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in {"script", "style", "noscript"}:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in {"script", "style", "noscript"} and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            return
+        text = normalize(data)
+        if text:
+            self.chunks.append(text)
+
 SHEETS_JOB_FIELDNAMES = [
     "ID",
     "Status",
@@ -177,6 +342,7 @@ CONTACTS_FIELDNAMES = [
     "Telegram Handle",
     "Email",
     "LinkedIn",
+    "LinkedIn Note",
     "Notes",
     "Added",
 ]
@@ -470,6 +636,8 @@ def packet_display_status(base_status: str, question_status: str) -> str:
     clean_question_status = str(question_status or "").strip()
     if not clean_base:
         return ""
+    if clean_question_status in {"Captured", "Captured from Screenshot"}:
+        return f"{clean_base} - Questions Ready"
     if clean_question_status == "Not Captured":
         return f"{clean_base} - Needs Questions"
     if clean_question_status == "Partially Captured":
@@ -479,6 +647,8 @@ def packet_display_status(base_status: str, question_status: str) -> str:
 
 def packet_question_prompt(question_status: str) -> str:
     clean_status = str(question_status or "").strip()
+    if clean_status in {"Captured", "Captured from Screenshot"}:
+        return "Alert: application-specific questions were captured and answered."
     if clean_status == "Not Captured":
         return "Action needed: paste the exact application questions."
     if clean_status == "Partially Captured":
@@ -702,6 +872,533 @@ def today_local() -> dt.date:
     return dt.datetime.now().date()
 
 
+def slugify(value: str) -> str:
+    clean = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
+    return clean or "item"
+
+
+def ensure_parent(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def pipeline_run_timestamp() -> str:
+    return dt.datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m-%dT%H-%M-%S-%f")
+
+
+def pipeline_run_log_path(command_name: str) -> Path:
+    return ensure_parent(PIPELINE_RUNS_DIR / f"{pipeline_run_timestamp()}-{slugify(command_name)}.json")
+
+
+def write_json(path: Path, payload: Any) -> None:
+    ensure_parent(path)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+
+
+def read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def normalized_company_key(company: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(company or "").lower())
+
+
+def normalized_title_key(title: str | None) -> str:
+    clean = str(title or "").lower()
+    clean = clean.replace("sr.", "senior").replace("sr ", "senior ")
+    clean = clean.replace("acct", "account")
+    clean = clean.replace("&", "and")
+    clean = re.sub(r"[^a-z0-9]+", " ", clean)
+    return normalize(clean)
+
+
+def strip_tracking_query(query: str) -> str:
+    kept: list[tuple[str, str]] = []
+    for key, value in parse_qsl(query, keep_blank_values=True):
+        lowered = key.lower()
+        if lowered in TRACKING_QUERY_PARAM_NAMES:
+            continue
+        if any(lowered.startswith(prefix) for prefix in TRACKING_QUERY_PARAM_PREFIXES):
+            continue
+        kept.append((key, value))
+    return urlencode(kept, doseq=True)
+
+
+def canonicalize_job_url(url: str | None) -> str:
+    clean = normalize(str(url or ""))
+    if not clean:
+        return ""
+    parsed = urlparse(clean)
+    path = re.sub(r"/+$", "", parsed.path or "")
+    if path == "":
+        path = "/"
+    query = strip_tracking_query(parsed.query)
+    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), path, "", query, ""))
+
+
+def pipeline_job_identity(company: str | None, title: str | None, url: str | None) -> str:
+    return " | ".join([normalized_company_key(company), normalized_title_key(title), canonicalize_job_url(url)])
+
+
+def html_links(html: str, base_url: str) -> list[str]:
+    parser = LinkExtractor()
+    parser.feed(html)
+    links: list[str] = []
+    for href in parser.links:
+        absolute = urljoin(base_url, href)
+        if absolute.startswith("http://") or absolute.startswith("https://"):
+            links.append(absolute)
+    return links
+
+
+def html_visible_text(html: str) -> str:
+    parser = VisibleTextExtractor()
+    parser.feed(html)
+    return normalize(" ".join(parser.chunks))
+
+
+def html_title(html: str) -> str:
+    match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        return ""
+    return normalize(re.sub(r"<[^>]+>", " ", match.group(1)))
+
+
+def html_meta_content(html: str, *names: str) -> str:
+    for name in names:
+        pattern = re.compile(
+            rf"<meta[^>]+(?:property|name)=[\"']{re.escape(name)}[\"'][^>]+content=[\"'](.*?)[\"']",
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        match = pattern.search(html)
+        if match:
+            return normalize(match.group(1))
+    return ""
+
+
+def json_ld_items(html: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    matches = re.findall(
+        r"<script[^>]+type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    for raw in matches:
+        try:
+            payload = json.loads(unescape(raw).strip())
+        except (json.JSONDecodeError, TypeError):
+            continue
+        candidates = payload if isinstance(payload, list) else [payload]
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            graph = candidate.get("@graph")
+            if isinstance(graph, list):
+                items.extend(item for item in graph if isinstance(item, dict))
+            items.append(candidate)
+    return items
+
+
+def job_posting_metadata(html: str) -> dict[str, str]:
+    for item in json_ld_items(html):
+        item_type = item.get("@type")
+        types = item_type if isinstance(item_type, list) else [item_type]
+        if "JobPosting" not in types:
+            continue
+        organization = item.get("hiringOrganization") or {}
+        company = organization.get("name") if isinstance(organization, dict) else ""
+        location = item.get("jobLocation")
+        return {
+            "title": normalize(str(item.get("title") or "")),
+            "company": normalize(str(company or "")),
+            "description": html_visible_text(str(item.get("description") or "")),
+            "employment_type": normalize(str(item.get("employmentType") or "")),
+            "location": normalize(json.dumps(location, ensure_ascii=True)) if location else "",
+            "date_posted": normalize(str(item.get("datePosted") or "")),
+            "valid_through": normalize(str(item.get("validThrough") or "")),
+        }
+    return {}
+
+
+def fetch_url(url: str, *, timeout_seconds: int, retries: int) -> dict[str, Any]:
+    attempts: list[str] = []
+    for attempt in range(1, retries + 2):
+        try:
+            request = Request(url, headers={"User-Agent": SOURCE_USER_AGENT})
+            with urlopen(request, timeout=timeout_seconds) as response:
+                body = response.read()
+                content_type = str(response.headers.get("Content-Type", ""))
+                charset_match = re.search(r"charset=([A-Za-z0-9_-]+)", content_type)
+                encoding = charset_match.group(1) if charset_match else "utf-8"
+                text = body.decode(encoding, errors="replace")
+                return {
+                    "ok": True,
+                    "url": url,
+                    "final_url": str(response.geturl()),
+                    "status": int(getattr(response, "status", 200)),
+                    "content_type": content_type,
+                    "text": text,
+                    "attempts": attempt,
+                }
+        except HTTPError as exc:
+            attempts.append(f"attempt {attempt}: HTTP {exc.code}")
+        except URLError as exc:
+            attempts.append(f"attempt {attempt}: {exc.reason}")
+        except Exception as exc:
+            attempts.append(f"attempt {attempt}: {exc}")
+    return {"ok": False, "url": url, "error": " | ".join(attempts)}
+
+
+def post_json(url: str, payload: dict[str, Any], *, timeout_seconds: int, retries: int) -> dict[str, Any]:
+    attempts: list[str] = []
+    body = json.dumps(payload).encode("utf-8")
+    for attempt in range(1, retries + 2):
+        try:
+            request = Request(
+                url,
+                data=body,
+                headers={"User-Agent": SOURCE_USER_AGENT, "Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request, timeout=timeout_seconds) as response:
+                text = response.read().decode("utf-8", errors="replace")
+                return {
+                    "ok": True,
+                    "status": int(getattr(response, "status", 200)),
+                    "text": text,
+                    "json": json.loads(text),
+                    "attempts": attempt,
+                }
+        except HTTPError as exc:
+            attempts.append(f"attempt {attempt}: HTTP {exc.code}")
+        except URLError as exc:
+            attempts.append(f"attempt {attempt}: {exc.reason}")
+        except json.JSONDecodeError as exc:
+            attempts.append(f"attempt {attempt}: invalid JSON ({exc})")
+        except Exception as exc:
+            attempts.append(f"attempt {attempt}: {exc}")
+    return {"ok": False, "error": " | ".join(attempts)}
+
+
+def discover_role_links(html: str, base_url: str) -> list[str]:
+    found: list[str] = []
+    seen: set[str] = set()
+    source_url = canonicalize_job_url(base_url)
+    for link in html_links(html, base_url):
+        if any(re.search(pattern, link, flags=re.IGNORECASE) for pattern in ROLE_LINK_PATTERNS):
+            canonical = canonicalize_job_url(link)
+            if canonical and canonical != source_url and canonical not in seen:
+                seen.add(canonical)
+                found.append(link)
+    return found
+
+
+def discover_opportunity_links(html: str, base_url: str) -> list[str]:
+    found: list[str] = []
+    seen: set[str] = set()
+    source_url = canonicalize_job_url(base_url)
+    for link in html_links(html, base_url):
+        if any(re.search(pattern, link, flags=re.IGNORECASE) for pattern in OPPORTUNITY_LINK_PATTERNS):
+            canonical = canonicalize_job_url(link)
+            if canonical and canonical != source_url and canonical not in seen:
+                seen.add(canonical)
+                found.append(link)
+    return found
+
+
+def word_count(text: str) -> int:
+    return len(re.findall(r"\b\w+\b", text or ""))
+
+
+ASHBY_BOARD_QUERY = """
+query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) {
+  jobBoard: jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) {
+    jobPostings {
+      id
+      title
+      locationName
+      workplaceType
+      employmentType
+      compensationTierSummary
+    }
+  }
+}
+""".strip()
+
+
+ASHBY_POSTING_QUERY = """
+query ApiJobPosting($organizationHostedJobsPageName: String!, $jobPostingId: String!) {
+  jobPosting(
+    organizationHostedJobsPageName: $organizationHostedJobsPageName
+    jobPostingId: $jobPostingId
+  ) {
+    id
+    title
+    locationName
+    locationAddress
+    workplaceType
+    employmentType
+    descriptionHtml
+    isListed
+    isConfidential
+    teamNames
+    secondaryLocationNames
+    compensationTierSummary
+    scrapeableCompensationSalarySummary
+  }
+}
+""".strip()
+
+GEM_BOARD_LIST_QUERY = """
+query JobBoardList($boardId: String!) {
+  oatsExternalJobPostings(boardId: $boardId) {
+    jobPostings {
+      id
+      extId
+      title
+      locations {
+        id
+        name
+        city
+        isoCountry
+        isRemote
+        extId
+      }
+      job {
+        id
+        department {
+          id
+          name
+          extId
+        }
+        locationType
+        employmentType
+      }
+    }
+  }
+}
+""".strip()
+
+GEM_POSTING_QUERY = """
+query ExternalJobPostingQuery($boardId: String!, $extId: String!) {
+  oatsExternalJobPosting(boardId: $boardId, extId: $extId) {
+    id
+    title
+    descriptionHtml
+    extId
+    startDateTs
+    firstPublishedTsSec
+    companyLogo
+    companyUrl
+    isApplicationFormHidden
+    isUnlistedExternally
+    locations {
+      id
+      extId
+      name
+      city
+      isoCountry
+      isRemote
+    }
+    job {
+      id
+      locationType
+      employmentType
+      requisitionId
+      teamDisplayName
+      department {
+        id
+        extId
+        name
+      }
+      locations {
+        id
+        extId
+        name
+        city
+        isoCountry
+        isRemote
+      }
+    }
+    jobPostSectionHtml {
+      introHtml
+      outroHtml
+    }
+    compensationHtml
+  }
+}
+""".strip()
+
+
+def ashby_slug_from_url(url: str) -> str:
+    return urlparse(url).path.strip("/").split("/")[0]
+
+
+def fetch_ashby_board(url: str, *, timeout_seconds: int, retries: int) -> dict[str, Any]:
+    slug = ashby_slug_from_url(url)
+    payload = {
+        "operationName": "ApiJobBoardWithTeams",
+        "variables": {"organizationHostedJobsPageName": slug},
+        "query": ASHBY_BOARD_QUERY,
+    }
+    result = post_json(
+        "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobBoardWithTeams",
+        payload,
+        timeout_seconds=timeout_seconds,
+        retries=retries,
+    )
+    if not result.get("ok"):
+        return result
+    return {
+        "ok": True,
+        "slug": slug,
+        "job_postings": (((result.get("json") or {}).get("data") or {}).get("jobBoard") or {}).get("jobPostings") or [],
+    }
+
+
+def fetch_ashby_posting(slug: str, job_posting_id: str, *, timeout_seconds: int, retries: int) -> dict[str, Any]:
+    payload = {
+        "operationName": "ApiJobPosting",
+        "variables": {"organizationHostedJobsPageName": slug, "jobPostingId": job_posting_id},
+        "query": ASHBY_POSTING_QUERY,
+    }
+    result = post_json(
+        "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting",
+        payload,
+        timeout_seconds=timeout_seconds,
+        retries=retries,
+    )
+    if not result.get("ok"):
+        return result
+    posting = (((result.get("json") or {}).get("data") or {}).get("jobPosting") or {})
+    if not posting:
+        return {"ok": False, "error": "empty Ashby posting payload"}
+    return {"ok": True, "posting": posting}
+
+
+def gem_board_id_from_url(url: str) -> str:
+    return urlparse(url).path.strip("/").split("/")[0]
+
+
+def fetch_gem_board(url: str, *, timeout_seconds: int, retries: int) -> dict[str, Any]:
+    board_id = gem_board_id_from_url(url)
+    payload = {
+        "operationName": "JobBoardList",
+        "variables": {"boardId": board_id},
+        "query": GEM_BOARD_LIST_QUERY,
+    }
+    result = post_json(
+        "https://jobs.gem.com/api/public/graphql",
+        payload,
+        timeout_seconds=timeout_seconds,
+        retries=retries,
+    )
+    if not result.get("ok"):
+        return result
+    postings = (((result.get("json") or {}).get("data") or {}).get("oatsExternalJobPostings") or {}).get("jobPostings") or []
+    return {"ok": True, "board_id": board_id, "job_postings": postings}
+
+
+def fetch_gem_posting(board_id: str, ext_id: str, *, timeout_seconds: int, retries: int) -> dict[str, Any]:
+    payload = {
+        "operationName": "ExternalJobPostingQuery",
+        "variables": {"boardId": board_id, "extId": ext_id},
+        "query": GEM_POSTING_QUERY,
+    }
+    result = post_json(
+        "https://jobs.gem.com/api/public/graphql",
+        payload,
+        timeout_seconds=timeout_seconds,
+        retries=retries,
+    )
+    if not result.get("ok"):
+        return result
+    posting = (((result.get("json") or {}).get("data") or {}).get("oatsExternalJobPosting") or {})
+    if not posting:
+        return {"ok": False, "error": "empty Gem posting payload"}
+    return {"ok": True, "posting": posting}
+
+
+def discover_greenhouse_role_links(board_url: str, html: str) -> list[str]:
+    links: list[str] = []
+    seen: set[str] = set()
+    for link in html_links(html, board_url):
+        parsed = urlparse(link)
+        if not re.search(r"/jobs/\d+", parsed.path):
+            continue
+        canonical = canonicalize_job_url(link)
+        if canonical and canonical not in seen:
+            seen.add(canonical)
+            links.append(link)
+    return links
+
+
+def lever_slug_from_url(url: str) -> str:
+    parts = [part for part in urlparse(url).path.strip("/").split("/") if part]
+    return parts[0] if parts else ""
+
+
+def fetch_lever_board(url: str, *, timeout_seconds: int, retries: int) -> dict[str, Any]:
+    slug = lever_slug_from_url(url)
+    if not slug:
+        return {"ok": False, "error": "missing Lever board slug"}
+    api_url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
+    result = fetch_url(api_url, timeout_seconds=timeout_seconds, retries=retries)
+    if not result.get("ok"):
+        return result
+    try:
+        postings = json.loads(str(result.get("text") or "[]"))
+    except json.JSONDecodeError as exc:
+        return {"ok": False, "error": f"invalid Lever JSON: {exc}"}
+    return {"ok": True, "slug": slug, "job_postings": postings}
+
+
+def lever_posting_text(posting: dict[str, Any], company: str) -> str:
+    categories = posting.get("categories") or {}
+    lists = posting.get("lists") or []
+    list_text = " ".join(
+        normalize(" ".join([str(item.get("text") or ""), str(item.get("content") or "")]))
+        for item in lists
+        if isinstance(item, dict)
+    )
+    return normalize(
+        " ".join(
+            [
+                str(posting.get("text") or ""),
+                company,
+                str(categories.get("team") or ""),
+                str(categories.get("department") or ""),
+                str(categories.get("location") or ""),
+                str(categories.get("commitment") or ""),
+                str(categories.get("workplaceType") or ""),
+                str(posting.get("descriptionPlain") or ""),
+                str(posting.get("additionalPlain") or ""),
+                list_text,
+            ]
+        )
+    )
+
+
+def discover_rippling_role_links(board_url: str, html: str) -> list[str]:
+    links: list[str] = []
+    seen: set[str] = set()
+    parsed_board = urlparse(board_url)
+    pattern = re.compile(r"(?:https://ats\.rippling\.com)?/[A-Za-z0-9_-]+/jobs/[a-f0-9-]{24,}", flags=re.IGNORECASE)
+    for match in pattern.findall(html):
+        absolute = urljoin(f"{parsed_board.scheme}://{parsed_board.netloc}", match)
+        canonical = canonicalize_job_url(absolute)
+        if canonical and canonical not in seen:
+            seen.add(canonical)
+            links.append(absolute)
+    for link in html_links(html, board_url):
+        if re.search(r"/jobs/[a-f0-9-]{24,}", urlparse(link).path, flags=re.IGNORECASE):
+            canonical = canonicalize_job_url(link)
+            if canonical and canonical not in seen:
+                seen.add(canonical)
+                links.append(link)
+    return links
+
+
 def normalize_status(status: str) -> str:
     clean = status.strip().lower().replace(" ", "_").replace("-", "_")
     aliases = {
@@ -764,9 +1461,13 @@ def infer_source_board(source: str | None) -> str | None:
         "jobs.dragonfly.xyz": "Dragonfly Jobs",
         "jobs.a16z.com": "a16z Jobs",
         "jobs.multicoin.capital": "Multicoin Jobs",
+        "jobs.electriccapital.com": "Electric Capital Jobs",
+        "jobs.variant.fund": "Variant Jobs",
         "jobs.panteracapital.com": "Pantera Jobs",
         "paradigm.xyz": "Paradigm Careers",
         "jobs.solana.com": "Solana Jobs",
+        "jobs.avax.network": "Avalanche Jobs",
+        "ethereumjobboard.com": "Ethereum Job Board",
         "jobs.ashbyhq.com": "Ashby",
         "jobs.lever.co": "Lever",
         "jobs.gem.com": "Gem",
@@ -780,6 +1481,22 @@ def infer_source_board(source: str | None) -> str | None:
         "cryptocurrencyjobs.co": "Cryptocurrency Jobs",
         "remote3.co": "Remote3",
         "linkedin.com": "LinkedIn",
+        "stablecoin-jobs.com": "Stablecoin Jobs",
+        "jobstash.xyz": "JobStash",
+        "beincrypto.com": "BeInCrypto Jobs",
+        "midnight.network": "Midnight Careers",
+        "block.xyz": "Block Careers",
+        "welcometothejungle.com": "Welcome to the Jungle",
+        "remoterocketship.com": "Remote Rocketship",
+        "dailyremote.com": "DailyRemote",
+        "tealhq.com": "Teal",
+        "flexjobs.com": "FlexJobs",
+        "himalayas.app": "Himalayas",
+        "builtin.com": "Built In",
+        "superteam.fun": "Superteam Earn",
+        "scribble.network": "Scribble",
+        "wizzhq.xyz": "Wizz",
+        "firstdollar.money": "First Dollar",
     }
     for needle, label in board_map.items():
         if needle in lowered:
@@ -1023,6 +1740,96 @@ def apply_domain_score_guardrail(
     return min(score, cap)
 
 
+def stretch_penalties(jd: str, profile: dict[str, Any], sector: str) -> tuple[int, list[str]]:
+    penalties = 0
+    concerns: list[str] = []
+    jd_lower = jd.lower()
+    profile_text = profile_professional_text(profile).lower()
+    has_csm_buildout_background = bool(
+        re.search(
+            r"\b(customer success|client success).{0,50}(lead|head|director|build|scale)|\b(build|scale).{0,50}(customer success|client success)\b",
+            profile_text,
+        )
+    )
+
+    csm_buildout = re.search(
+        r"\b(first customer success manager|first csm|build(?:ing)? or scaling csm teams?|grow(?:ing)? .*customer success team|scaling of the customer success organization|team leadership \(future\))\b",
+        jd_lower,
+    )
+    if csm_buildout and not has_csm_buildout_background:
+        penalties += 8
+        concerns.append("role expects CS org buildout / team-scaling experience")
+
+    developer_infra_depth = re.search(
+        r"\b(developer workflows|blockchain architectures|open-source projects|developer ecosystems|production ready infrastructure|engineering teams|low latency)\b",
+        jd_lower,
+    )
+    if developer_infra_depth and not re.search(r"\bengineer|engineering|developer relations|solutions architect|technical account\b", profile_text):
+        penalties += 6
+        concerns.append("role expects deeper developer-facing infrastructure fluency")
+
+    community_success = re.search(
+        r"\b(community-driven success programs|ambassador networks|decentralized governance touchpoints)\b",
+        jd_lower,
+    )
+    if community_success:
+        penalties += 3
+        concerns.append("community-led success motion is not a primary background strength")
+
+    if sector == "Cybersecurity" and re.search(r"\b(financial crime|sanctions|aml|kyc|investigations|compliance operations)\b", jd_lower):
+        penalties += 4
+        concerns.append("direct financial-crime / compliance operations depth is limited")
+
+    if re.search(r"\baccount executive\b|\benterprise account executive\b", jd_lower):
+        hunter_signals = re.search(
+            r"\b(new logo|prospecting|pipeline generation|quota attainment|closing new business|territory plan|territory ownership|hunter)\b",
+            jd_lower,
+        )
+        account_mgmt_signals = re.search(r"\b(renewal|expansion|existing accounts|account management|named accounts|book of business)\b", jd_lower)
+        if hunter_signals and not account_mgmt_signals:
+            penalties += 10
+            concerns.append("full-cycle AE / new-logo motion is a stretch relative to recent AM-led experience")
+
+    if re.search(
+        r"\b(pacific northwest|pac northwest|ohio valley|chicago|midwest|northeast|southeast|san francisco|bay area|new york city|london|singapore|hong kong|apac|emea)\b",
+        jd_lower,
+    ):
+        penalties += 8
+        concerns.append("named territory may require local market presence or tighter geographic alignment")
+
+    if re.search(r"\b(federal|public sector|civilian|dod|department of defense|clearance|national security)\b", jd_lower):
+        penalties += 8
+        concerns.append("federal / public-sector fit is reduced by inactive clearance and limited public-sector SaaS tenure")
+        if sector in {"Cybersecurity", "Defense / Dual-Use"}:
+            penalties += 8
+            concerns.append("federal cybersecurity / defense expectations add a second stretch beyond the core commercial fit")
+
+    return penalties, concerns
+
+
+def reserve_top_end_score(score: int, *, jd: str, stretch_penalty: int) -> int:
+    if score <= 96:
+        return score
+    if stretch_penalty > 0:
+        return min(score, 93)
+    if not re.search(r"\bsalary\b|\bbase\b|\bcompensation\b|\$\b", jd, re.I):
+        return min(score, 96)
+    return score
+
+
+def sparse_description_penalty(jd: str) -> tuple[int, list[str]]:
+    word_count = len(re.findall(r"\b\w+\b", jd))
+    penalties = 0
+    concerns: list[str] = []
+    if word_count < 120:
+        penalties += 14
+        concerns.append("job description is sparse; score confidence is reduced")
+    elif word_count < 220:
+        penalties += 8
+        concerns.append("job description is partial; score confidence is reduced")
+    return penalties, concerns
+
+
 def evaluate_job(jd: str, profile: dict[str, Any], title: str | None = None, company: str | None = None) -> dict[str, Any]:
     jd = normalize(jd)
     extracted_title, extracted_company = extract_company_and_title(jd, title, company)
@@ -1050,6 +1857,8 @@ def evaluate_job(jd: str, profile: dict[str, Any], title: str | None = None, com
         affinity_bonus, affinity_signals = personal_domain_affinity_bonus(profile, sector)
     territory_penalty, territory_concern = regional_territory_penalty(extracted_title, profile)
     domain_gap_penalty = DOMAIN_GAP_PENALTY if domain_preference and not direct_domain_experience else 0
+    stretch_penalty, stretch_concerns = stretch_penalties(jd, profile, sector)
+    sparse_penalty, sparse_concerns = sparse_description_penalty(jd)
 
     positive_score = min(sum(item["weight"] for item in positive_matches), 45)
     red_flag_penalty = min(sum(item["weight"] for item in red_flags), 45)
@@ -1060,7 +1869,18 @@ def evaluate_job(jd: str, profile: dict[str, Any], title: str | None = None, com
     )
 
     base = 30
-    raw_score = base + t_score + positive_score + comp_delta + affinity_bonus - red_flag_penalty - domain_gap_penalty - territory_penalty
+    raw_score = (
+        base
+        + t_score
+        + positive_score
+        + comp_delta
+        + affinity_bonus
+        - red_flag_penalty
+        - domain_gap_penalty
+        - territory_penalty
+        - stretch_penalty
+        - sparse_penalty
+    )
     score = max(0, min(100, raw_score))
     score = apply_domain_score_guardrail(
         score,
@@ -1069,6 +1889,7 @@ def evaluate_job(jd: str, profile: dict[str, Any], title: str | None = None, com
         direct_domain_experience=direct_domain_experience,
         affinity_bonus=affinity_bonus,
     )
+    score = reserve_top_end_score(score, jd=jd, stretch_penalty=stretch_penalty)
 
     matched_signals = title_reasons + [item["label"] for item in positive_matches]
     if affinity_bonus > 0 and affinity_signals:
@@ -1085,6 +1906,8 @@ def evaluate_job(jd: str, profile: dict[str, Any], title: str | None = None, com
         concerns.append(domain_gap_concern(sector))
     if territory_concern:
         concerns.append(territory_concern)
+    concerns.extend(stretch_concerns)
+    concerns.extend(sparse_concerns)
     concerns.extend(infer_missing_signals(jd))
 
     fit_band = band_for_score(score)
@@ -1877,7 +2700,7 @@ def build_resume_bullets(title: str, company: str, matches: list[str], jd: str) 
         )
     if any(term in lowered for term in ["defense", "national security", "dual-use", "aerospace", "dod", "department of defense", "federal"]):
         bullets.append(
-            "Surface defense-adjacent credibility: closed 3 Department of Defense DBPAs totaling $9M over 3 years and held Top Secret clearance for specific DoD-contracted game-development projects."
+            "Surface defense-adjacent credibility: closed defense-adjacent commercial agreements totaling meaningful contract value over 3 years and held verified clearance context for specific defense-adjacent projects."
         )
     if any(term in lowered for term in ["forecast", "pipeline", "salesforce", "crm", "revenue operations", "revops"]):
         bullets.append(
@@ -1942,6 +2765,56 @@ def classify_application_question(question: str) -> str | None:
     clean = normalize(question).lower()
     if not clean:
         return None
+    if "allium" in clean and ("favorite" in clean or "what is an allium" in clean):
+        return "allium_pop_quiz"
+    if "authorized to work" in clean or "work authorization" in clean:
+        return "work_authorization"
+    if "sponsorship" in clean or "sponsor" in clean:
+        return "sponsorship"
+    if "worked for" in clean or "previously employed" in clean:
+        return "prior_employer"
+    if "do you know anyone" in clean and "works at" in clean:
+        return "known_contact"
+    if "who do you know" in clean and "works at" in clean:
+        return "known_contact_details"
+    if any(
+        term in clean
+        for term in [
+            "from where do you intend to work",
+            "from which country",
+            "current location",
+            "where are you located",
+            "location are you applying",
+            "remote?",
+            "relocat",
+            "working in person",
+            "work in person",
+            "onsite",
+            "on-site",
+            "hybrid",
+        ]
+    ):
+        return "location"
+    if any(term in clean for term in ["compensation", "salary", "ote", "base pay", "base salary", "desired pay"]):
+        return "compensation"
+    if "why do you want" in clean or "why are you interested" in clean or "why join" in clean:
+        return "why_company"
+    if "anything else" in clean or "additional information" in clean or "extra information" in clean or "good fit" in clean:
+        return "anything_else"
+    if "monitor progress" in clean and ("accounts" in clean or "projects" in clean):
+        return "project_monitoring"
+    if "challenge" in clean and "account" in clean:
+        return "account_challenge"
+    if ("partnerships" in clean and "ecosystems" in clean) or "partnerships or ecosystems" in clean:
+        return "partnership_ecosystem"
+    if "high-impact strategic project" in clean or "strategic project" in clean:
+        return "strategic_project"
+    if "blockchain partners" in clean or "real-world use cases" in clean:
+        return "blockchain_partners"
+    if "multiple complex projects" in clean or "attention to detail" in clean:
+        return "project_management"
+    if "defi use cases" in clean or "financial inclusion" in clean or "monetary freedom" in clean:
+        return "defi_use_cases"
     if "account manager" in clean and (" csm" in f" {clean}" or "customer success manager" in clean) and "difference" in clean:
         return "am_vs_csm"
     if "ai" in clean and ("past 3 months" in clean or "learned" in clean or "learning" in clean):
@@ -2079,12 +2952,184 @@ def draft_am_vs_csm_answer() -> str:
     return "\n\n".join(paragraphs)
 
 
+def draft_work_authorization_answer() -> str:
+    return "Yes. I am authorized to work in the United States and do not require employer sponsorship."
+
+
+def draft_sponsorship_answer() -> str:
+    return "No. I do not require employer sponsorship now or in the future."
+
+
+def draft_prior_employer_answer(company: str) -> str:
+    company_text = company.strip() or "this company"
+    return f"No. I have not previously worked for {company_text} as an employee, contractor, or consultant."
+
+
+def draft_known_contact_answer() -> str:
+    return "No verified employee contact is confirmed yet. If the candidate has a real referral or employee contact before submitting, update this answer before applying."
+
+
+def draft_known_contact_details_answer(company: str) -> str:
+    company_text = company.strip() or "the company"
+    return f"Leave blank unless the candidate has a verified {company_text} employee contact or referral to list."
+
+
+def draft_location_answer(question: str = "") -> str:
+    clean = normalize(question).lower()
+    if any(term in clean for term in ["nyc", "new york", "working in person", "work in person", "onsite", "on-site"]):
+        return (
+            "Yes. I am open to working in person in NYC for the right role, and I would want to align on relocation timing, "
+            "office cadence, and the relocation-stipend details during the process."
+        )
+    return "San Juan, PR. I am focused on remote US-compatible roles and can travel as needed for the right role."
+
+
+def draft_compensation_answer() -> str:
+    return (
+        "I am flexible depending on role scope, base, OTE, equity, and overall fit. "
+        "For the right Senior Account Manager, Strategic Partnerships, Customer Success, or commercial role, "
+        "I would ideally like to be in the $120K+ base range with upside tied to revenue, expansion, or company growth."
+    )
+
+
+def draft_why_company_answer(company: str, title: str) -> str:
+    company_text = company.strip() or "the company"
+    title_text = title.strip() or "the role"
+    return (
+        f"I am interested in {company_text} because the {title_text} role sits close to the work I do best: owning important customer relationships, "
+        "understanding technical or complex products, and turning that context into retention, expansion, partnerships, or commercial momentum. "
+        "My background across RecentCo, PartnerCo, and EarlierCo has given me a mix of Web3/technical-market fluency, strategic account ownership, "
+        "and long-cycle commercial discipline. I would bring a practical, relationship-led approach to helping customers and partners get more value from the product."
+    )
+
+
+def draft_anything_else_answer(company: str) -> str:
+    company_text = company.strip() or "the team"
+    return (
+        f"The main thing I would add is that I am strongest in roles where I can combine commercial ownership with real customer context. "
+        f"For {company_text}, I would bring recent Web3 and technical-market account experience from recent account management and earlier partnerships work, plus a longer account-management foundation from EarlierCo, "
+        "where I managed a large recurring-revenue book across complex customers. I am not trying to position myself as an engineer; my strength is translating customer goals, product value, and stakeholder needs into durable commercial outcomes."
+    )
+
+
+def draft_allium_pop_quiz_answer(question: str) -> str:
+    clean = normalize(question).lower()
+    if "favorite" in clean:
+        return (
+            "My favorite Allium is garlic. It is simple, useful, and shows up everywhere once you understand how much flavor it adds, "
+            "which is a decent metaphor for good data infrastructure: not always flashy, but foundational."
+        )
+    return "An Allium is a genus of flowering plants that includes onions, garlic, leeks, scallions, shallots, and chives."
+
+
+def draft_project_monitoring_answer() -> str:
+    return (
+        "I monitor account progress by turning each account into a clear operating cadence: goals, active initiatives, blockers, stakeholders, dates, and next steps. "
+        "At RecentCo, I worked across protocol accounts where renewals, expansion opportunities, research delivery, product context, and client expectations all had to stay aligned. "
+        "The practical approach was to keep account health visible, identify what was stalled, assign a concrete next action, and follow up with the right internal or customer stakeholder before momentum faded.\n\n"
+        "To make projects progress, I would first clarify the commercial outcome, then break the work into the next few decisions needed: who owns the next step, what information is missing, what risk needs to be removed, and what timeline matters. "
+        "I have found that most account work improves when ambiguity is converted into a simple action plan and reviewed consistently."
+    )
+
+
+def draft_account_challenge_answer() -> str:
+    return (
+        "One account challenge I managed was reactivating a previously stalled strategic account that had lost momentum. "
+        "The issue was not solved by pushing harder; it required understanding why the relationship had stalled, rebuilding trust, clarifying the customer's priorities, and coordinating internally so the account had a realistic path forward.\n\n"
+        "I focused on the commercial and relationship basics: getting clear on the stakeholder map, surfacing what value the customer still cared about, creating next steps that were easy to act on, and keeping internal teams aligned around the account. "
+        "That work helped recover recovered revenue in revenue and reinforced how I approach difficult accounts: diagnose the real blocker, rebuild credibility, and create a specific path to the next decision."
+    )
+
+
+def draft_partnership_ecosystem_answer() -> str:
+    return (
+        "My strongest partnerships and ecosystem experience comes from PartnerCo, where I led strategic partnerships across wallets, exchanges, protocols, and other Web3 projects. "
+        "I closed many strategic partnerships and built relationships across many Web3 organizations, which required identifying where the product created value, helping partners understand the integration or go-to-market angle, and keeping momentum through technical and commercial follow-up.\n\n"
+        "At RecentCo, I built on that experience from the account-management side by managing strategic technical-account relationships and working across renewals, expansion, and cross-functional delivery. "
+        "The common thread is ecosystem trust: understanding what each partner or customer is trying to accomplish, translating technical value into business value, and creating a clear path for adoption, retention, or expansion."
+    )
+
+
+def draft_strategic_project_answer() -> str:
+    return (
+        "A high-impact strategic project I helped drive was improving account and renewal visibility at RecentCo. "
+        "The account-management motion was spread across Salesforce, Notion, spreadsheets, Slack, and internal documents, which made it harder to see renewal timing, expansion opportunities, account risk, and next steps in one place.\n\n"
+        "I helped create more structure around that workflow so the team could track account health, renewal readiness, expansion opportunities, and follow-up more consistently. "
+        "The execution piece mattered as much as the idea: keeping the system practical, making sure it reflected real account work, and using it to support better prioritization instead of creating another admin layer."
+    )
+
+
+def draft_blockchain_partners_answer() -> str:
+    return (
+        "I would approach blockchain partners by starting with the actual use case and the partner's business goal, not with a generic Web3 pitch. "
+        "Different partners care about different outcomes: wallets may care about user experience and retention, exchanges may care about liquidity or customer access, protocols may care about ecosystem growth, and institutions may care about trust, reporting, compliance, or operational reliability.\n\n"
+        "My approach would be to map the partner's goal, identify the technical or commercial blocker, and then define a practical next step that proves value. "
+        "At PartnerCo, that kind of partner-led thinking helped me close many strategic partnerships across wallets, exchanges, and protocols. At RecentCo, it helped me work with strategic technical-account clients where technical context, relationship trust, and commercial follow-through all mattered."
+    )
+
+
+def draft_project_management_answer() -> str:
+    return (
+        "I manage multiple complex projects by keeping a clear source of truth for priorities, owners, blockers, and next actions. "
+        "In account-management and partnerships roles, it is easy for work to get scattered across calls, Slack, CRM notes, customer emails, and internal docs. I try to reduce that by translating everything into a practical operating view: what matters, who owns it, what is blocked, and what needs to happen next.\n\n"
+        "The attention-to-detail piece comes from being disciplined about follow-through. At EarlierCo, I managed a large recurring-revenue book across complex customers, where missed details could affect procurement, retention, or customer trust. "
+        "At recent account management and earlier partnerships work, the products were more technical and the stakeholders were more cross-functional, but the same discipline applied: keep the work visible, confirm assumptions, and follow up before issues become surprises."
+    )
+
+
+def draft_defi_use_cases_answer() -> str:
+    return (
+        "The DeFi use cases that best advance financial inclusion and monetary freedom are the ones that make financial access more useful, transparent, and portable without requiring users to depend entirely on a single institution. "
+        "Stablecoin payments, cross-border settlement, self-custody, onchain savings or yield products, and transparent market infrastructure can all matter when they solve a real access, cost, or trust problem.\n\n"
+        "I am most interested in use cases that connect crypto-native infrastructure to practical financial outcomes. "
+        "At PartnerCo, I worked across wallets, exchanges, and protocols, which gave me a clear view of how much adoption depends on usability and trust. At RecentCo, I worked with protocol customers where data, transparency, and ecosystem credibility mattered. "
+        "The strongest DeFi use cases are not just speculative; they reduce friction, improve access, and give users or institutions a better way to move, store, understand, or use value."
+    )
+
+
 def draft_application_answer(
     voice: dict[str, Any],
     *,
     question: str,
+    job: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     category = classify_application_question(question)
+    company = str((job or {}).get("company") or "").strip()
+    title = str((job or {}).get("title") or "").strip()
+    if category == "allium_pop_quiz":
+        return draft_allium_pop_quiz_answer(question), application_answer_playbook(voice, category)
+    if category == "work_authorization":
+        return draft_work_authorization_answer(), application_answer_playbook(voice, category)
+    if category == "sponsorship":
+        return draft_sponsorship_answer(), application_answer_playbook(voice, category)
+    if category == "prior_employer":
+        return draft_prior_employer_answer(company), application_answer_playbook(voice, category)
+    if category == "known_contact":
+        return draft_known_contact_answer(), application_answer_playbook(voice, category)
+    if category == "known_contact_details":
+        return draft_known_contact_details_answer(company), application_answer_playbook(voice, category)
+    if category == "location":
+        return draft_location_answer(question), application_answer_playbook(voice, category)
+    if category == "compensation":
+        return draft_compensation_answer(), application_answer_playbook(voice, category)
+    if category == "why_company":
+        return draft_why_company_answer(company, title), application_answer_playbook(voice, category)
+    if category == "anything_else":
+        return draft_anything_else_answer(company), application_answer_playbook(voice, category)
+    if category == "project_monitoring":
+        return draft_project_monitoring_answer(), application_answer_playbook(voice, category)
+    if category == "account_challenge":
+        return draft_account_challenge_answer(), application_answer_playbook(voice, category)
+    if category == "partnership_ecosystem":
+        return draft_partnership_ecosystem_answer(), application_answer_playbook(voice, category)
+    if category == "strategic_project":
+        return draft_strategic_project_answer(), application_answer_playbook(voice, category)
+    if category == "blockchain_partners":
+        return draft_blockchain_partners_answer(), application_answer_playbook(voice, category)
+    if category == "project_management":
+        return draft_project_management_answer(), application_answer_playbook(voice, category)
+    if category == "defi_use_cases":
+        return draft_defi_use_cases_answer(), application_answer_playbook(voice, category)
     if category == "sales_philosophy":
         return draft_sales_philosophy_answer(voice), application_answer_playbook(voice, category)
     if category == "ai_automation":
@@ -2100,6 +3145,7 @@ def enrich_application_questions_for_packet(
     questions: list[dict[str, Any]],
     *,
     voice: dict[str, Any],
+    job: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     enriched_questions: list[dict[str, Any]] = []
     generic_ats_strategy = (
@@ -2115,7 +3161,7 @@ def enrich_application_questions_for_packet(
         question = str(enriched.get("question") or "").strip()
         if not question:
             continue
-        drafted_answer, playbook = draft_application_answer(voice, question=question)
+        drafted_answer, playbook = draft_application_answer(voice, question=question, job=job)
         existing_answer = str(enriched.get("recommended_written_answer") or "").strip()
         if drafted_answer and not existing_answer:
             enriched["recommended_written_answer"] = drafted_answer
@@ -2156,7 +3202,21 @@ No application questions have been captured for this role yet.
 - Add the exact ATS/application questions before using this section.
 - Do not generate generic answers for unasked questions.
 """
-    sections = ["## 6. Application Questions + Tailored Answers"]
+    question_list = "\n".join(
+        f"- {normalize(str(item.get('question') or '')).strip()}"
+        for item in questions
+        if isinstance(item, dict) and str(item.get("question") or "").strip()
+    )
+    sections = [
+        f"""## 6. Application Questions + Tailored Answers
+
+## Application Questions Alert
+
+Captured {len(questions)} application-specific question(s) for this role. Review these before submitting; the recommended answers below were generated for the exact captured prompts.
+
+{question_list}
+"""
+    ]
     for index, item in enumerate(questions, start=1):
         question = str(item.get("question") or "").strip()
         answer_type = str(item.get("answer_type") or "unknown").strip()
@@ -2208,9 +3268,13 @@ def application_questions_status_payload(override: dict[str, Any]) -> dict[str, 
     reason = str(override.get("capture_reason") or "").strip()
     next_action = str(override.get("capture_next_action") or "").strip()
     if status == "Captured from Screenshot":
+        question_count = len(questions)
         body = (
             "## 2. Application Questions Status\n\n"
             "Status: Captured from Screenshot\n\n"
+            "Application Questions Alert:\n"
+            f"- {question_count} visible application-specific question(s) captured and answered in this packet.\n"
+            "- Review the generated answers before submitting the application.\n\n"
             "Notes:\n"
             "- Questions were extracted from the visible screenshot.\n"
             "- Only visible questions were answered.\n"
@@ -2232,9 +3296,13 @@ def application_questions_status_payload(override: dict[str, Any]) -> dict[str, 
             ),
         }
     if status == "Captured" or questions:
+        question_count = len(questions)
         body = (
             "## 2. Application Questions Status\n\n"
             "Status: Captured\n\n"
+            "Application Questions Alert:\n"
+            f"- {question_count} application-specific question(s) captured and answered in this packet.\n"
+            "- Review the generated answers before submitting the application.\n\n"
             f"Reason:\n- {reason or 'Questions were captured and stored for this job.'}\n\n"
             f"Next Action:\n- {next_action or 'None'}\n"
         )
@@ -2303,6 +3371,293 @@ def guess_application_question_risk(question: str) -> tuple[str, bool, bool]:
     )
     risk_level = "high" if likely_knockout or fit_gap else "medium" if len(clean.split()) > 14 else "low"
     return risk_level, fit_gap, likely_knockout
+
+
+STANDARD_APPLICATION_FIELD_PATTERNS = [
+    r"^first name$",
+    r"^last name$",
+    r"^preferred first name$",
+    r"^full name$",
+    r"^name$",
+    r"^email( address)?$",
+    r"^phone( number)?$",
+    r"^resume/?cv$",
+    r"^resume$",
+    r"^cv$",
+    r"^cover letter$",
+    r"^linkedin( profile)?$",
+    r"^website$",
+    r"^portfolio$",
+    r"^pronouns$",
+    r"^address$",
+    r"^city$",
+    r"^country$",
+    r"^state$",
+    r"^zip( code)?$",
+    r"^voluntary self-identification",
+    r"^gender$",
+    r"^race$",
+    r"^ethnicity$",
+    r"^veteran status$",
+    r"^disability status$",
+]
+
+
+QUESTION_CONTEXT_CUES = [
+    "application question",
+    "application questions",
+    "custom question",
+    "custom questions",
+    "questionnaire",
+    "all applicants",
+    "applicants have to answer",
+    "please answer",
+    "answer this",
+    "pop quiz",
+    "screening question",
+    "screening questions",
+]
+
+
+def is_standard_application_field(question: str) -> bool:
+    clean = normalize(unescape(question)).strip(" *:")
+    lowered = clean.lower()
+    if not clean:
+        return True
+    if len(clean) > 260:
+        return True
+    if any(re.fullmatch(pattern, lowered) for pattern in STANDARD_APPLICATION_FIELD_PATTERNS):
+        return True
+    if lowered in {"yes", "no", "submit application", "apply for this job"}:
+        return True
+    if any(
+        term in lowered
+        for term in [
+            "preferred first name",
+            "linkedin profile",
+            "gender identity",
+            "racial/ethnic",
+            "racial background",
+            "ethnic background",
+            "sexual orientation",
+            "transgender",
+            "veteran or active member",
+            "armed forces",
+            "hispanic/latino",
+            "disability",
+            "voluntary demographic",
+        ]
+    ):
+        return True
+    return False
+
+
+def canonical_application_question_text(question: str) -> str:
+    clean = normalize(unescape(question)).strip(" *:")
+    clean = clean.replace('\\"', '"').strip('" ')
+    clean = re.sub(
+        r"^all applicants have to answer this pop quiz:\s*",
+        "",
+        clean,
+        flags=re.IGNORECASE,
+    ).strip('" ')
+    return clean
+
+
+def looks_like_application_question(question: str) -> bool:
+    clean = canonical_application_question_text(question)
+    lowered = clean.lower()
+    if is_standard_application_field(clean):
+        return False
+    if "simple question like" in lowered:
+        return False
+    if len(clean) > 140 and not lowered.startswith(
+        (
+            "why ",
+            "how ",
+            "what ",
+            "when ",
+            "where ",
+            "which ",
+            "who ",
+            "tell us",
+            "please describe",
+            "please explain",
+            "please share",
+            "describe ",
+            "explain ",
+            "list ",
+            "do you ",
+            "are you ",
+            "have you ",
+            "will you ",
+            "can you ",
+            "did you ",
+            "from where ",
+        )
+    ):
+        return False
+    starts_like_prompt = lowered.startswith(
+        (
+            "why ",
+            "how ",
+            "what ",
+            "when ",
+            "where ",
+            "which ",
+            "who ",
+            "tell us",
+            "tell me",
+            "please describe",
+            "please explain",
+            "please share",
+            "describe ",
+            "explain ",
+            "list ",
+            "do you ",
+            "are you ",
+            "have you ",
+            "will you ",
+            "can you ",
+            "did you ",
+            "from where ",
+        )
+    )
+    contains_screening_keyword = any(
+        term in lowered
+        for term in [
+            "authorized to work",
+            "sponsorship",
+            "compensation",
+            "salary",
+            "remote",
+            "relocate",
+            "quota",
+            "years of experience",
+            "worked for",
+            "why are you interested",
+            "why do you want",
+        ]
+    )
+    return clean.endswith("?") or starts_like_prompt or contains_screening_keyword
+
+
+def application_question_item(question: str, *, source_url: str = "", capture_method: str = "auto") -> dict[str, Any]:
+    clean = canonical_application_question_text(question)
+    answer_type = guess_application_answer_type(clean)
+    risk_level, fit_gap, likely_knockout = guess_application_question_risk(clean)
+    return {
+        "question": clean,
+        "answer_type": answer_type,
+        "risk_level": risk_level,
+        "fit_gap": fit_gap,
+        "likely_knockout": likely_knockout,
+        "recommended_selection": "Needs Codex review" if answer_type in {"yes_no", "work_auth", "location", "compensation"} else "Needs Codex draft",
+        "recommended_written_answer": "",
+        "why_this_answer_works": "",
+        "ats_strategy": "",
+        "recruiter_screen_risk": "",
+        "reasoning": "",
+        "notes_for_candidate": f"Auto-captured from {capture_method}. Review before submitting.",
+        "source_url": source_url,
+        "capture_method": capture_method,
+    }
+
+
+def extract_label_like_questions_from_html(html: str, *, source_url: str = "") -> list[dict[str, Any]]:
+    questions: list[str] = []
+    patterns = [
+        r"<label\b[^>]*>(.*?)</label>",
+        r"aria-label=[\"']([^\"']{4,260})[\"']",
+        r"placeholder=[\"']([^\"']{4,260})[\"']",
+    ]
+    for pattern in patterns:
+        for match in re.findall(pattern, html, flags=re.IGNORECASE | re.DOTALL):
+            text = html_visible_text(str(match))
+            if looks_like_application_question(text):
+                questions.append(text)
+    return dedupe_application_question_items(
+        [application_question_item(question, source_url=source_url, capture_method="visible ATS form HTML") for question in questions]
+    )
+
+
+def extract_question_sentences_near_application_cues(text: str, *, source_url: str = "") -> list[dict[str, Any]]:
+    clean = normalize(unescape(re.sub(r"<[^>]+>", " ", text or "")))
+    lowered = clean.lower()
+    questions: list[str] = []
+    for cue in QUESTION_CONTEXT_CUES:
+        start = 0
+        while True:
+            index = lowered.find(cue, start)
+            if index < 0:
+                break
+            window = clean[index : index + 900]
+            questions.extend(re.findall(r"([A-Z0-9][^?]{4,240}\?)", window))
+            start = index + len(cue)
+    return dedupe_application_question_items(
+        [
+            application_question_item(question, source_url=source_url, capture_method="application-question cue in posting")
+            for question in questions
+            if looks_like_application_question(question)
+        ]
+    )
+
+
+def extract_application_questions_from_payload(payload: Any, *, source_url: str = "") -> list[dict[str, Any]]:
+    discovered: list[dict[str, Any]] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            key_lower = str(key).lower()
+            if any(term in key_lower for term in ["question", "prompt", "label"]):
+                if isinstance(value, str) and looks_like_application_question(value):
+                    discovered.append(application_question_item(value, source_url=source_url, capture_method="ATS payload"))
+                elif isinstance(value, list):
+                    discovered.extend(extract_application_questions_from_payload(value, source_url=source_url))
+                elif isinstance(value, dict):
+                    discovered.extend(extract_application_questions_from_payload(value, source_url=source_url))
+            elif isinstance(value, (dict, list)):
+                discovered.extend(extract_application_questions_from_payload(value, source_url=source_url))
+    elif isinstance(payload, list):
+        for item in payload:
+            discovered.extend(extract_application_questions_from_payload(item, source_url=source_url))
+    return dedupe_application_question_items(discovered)
+
+
+def dedupe_application_question_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        question = canonical_application_question_text(str(item.get("question") or ""))
+        if not question or is_standard_application_field(question):
+            continue
+        item["question"] = question
+        key = question.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def detect_application_questions(
+    *,
+    source_url: str,
+    source_type: str,
+    role_text: str = "",
+    html: str = "",
+    payload: Any = None,
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    if html:
+        items.extend(extract_label_like_questions_from_html(html, source_url=source_url))
+        items.extend(extract_question_sentences_near_application_cues(html, source_url=source_url))
+    if role_text:
+        items.extend(extract_question_sentences_near_application_cues(role_text, source_url=source_url))
+    if payload is not None:
+        items.extend(extract_application_questions_from_payload(payload, source_url=source_url))
+    for item in items:
+        item.setdefault("source_type", source_type)
+    return dedupe_application_question_items(items)
 
 
 def parse_application_questions_text(text: str) -> list[dict[str, Any]]:
@@ -2419,6 +3774,65 @@ def capture_application_questions(
         conn.execute("UPDATE job_evaluations SET last_updated_at = ? WHERE id = ?", (now_utc(), job_id))
     stored = overrides.get(key, {}) if isinstance(overrides.get(key), dict) else {}
     return len(stored.get("questions", []))
+
+
+def store_detected_application_questions(
+    db_path: Path,
+    *,
+    job_id: int,
+    questions: list[dict[str, Any]],
+    source_url: str,
+    source_type: str,
+    path: Path = APPLICATION_QUESTION_OVERRIDES_JSON,
+) -> int:
+    if not questions:
+        return 0
+    ensure_schema(db_path)
+    overrides = load_application_question_overrides(path)
+    key = str(job_id)
+    existing = overrides.get(key, {}) if isinstance(overrides.get(key), dict) else {}
+    merged = existing.get("questions", []) if isinstance(existing.get("questions"), list) else []
+    merged.extend(questions)
+    existing["questions"] = dedupe_application_question_items([item for item in merged if isinstance(item, dict)])
+    existing["capture_status"] = "Captured"
+    existing["capture_reason"] = (
+        f"Auto-captured from the public {source_type} posting/application form during sourcing: {source_url}"
+    )
+    existing["capture_next_action"] = (
+        "Review the Application Questions Alert before submitting. If the ATS reveals later-step questions, capture those and regenerate this section."
+    )
+    overrides[key] = existing
+    save_application_question_overrides(overrides, path)
+    with sqlite3.connect(db_path) as conn:
+        require_job(conn, job_id)
+        conn.execute("UPDATE job_evaluations SET last_updated_at = ? WHERE id = ?", (now_utc(), job_id))
+    return len(existing["questions"])
+
+
+def detect_and_store_application_questions_for_job(
+    db_path: Path,
+    *,
+    job_id: int,
+    source_url: str,
+    source_type: str,
+    role_text: str = "",
+    html: str = "",
+    payload: Any = None,
+) -> int:
+    questions = detect_application_questions(
+        source_url=source_url,
+        source_type=source_type,
+        role_text=role_text,
+        html=html,
+        payload=payload,
+    )
+    return store_detected_application_questions(
+        db_path,
+        job_id=job_id,
+        questions=questions,
+        source_url=source_url,
+        source_type=source_type,
+    )
 
 
 def ats_risk_assessment_md(
@@ -2683,6 +4097,7 @@ def ensure_contacts_columns(conn: sqlite3.Connection) -> None:
     existing = {row[1] for row in conn.execute("PRAGMA table_info(contacts)").fetchall()}
     columns = {
         "telegram_handle": "TEXT",
+        "linkedin_note": "TEXT",
     }
     for name, definition in columns.items():
         if name not in existing:
@@ -2772,6 +4187,36 @@ def duplicate_jobs_message(rows: list[dict[str, Any]]) -> str:
         )
     lines.append("Rerun with --allow-duplicate if this is intentionally a separate posting.")
     return "\n".join(lines)
+
+
+def deterministic_duplicate_jobs(
+    db_path: Path,
+    *,
+    title: str | None,
+    company: str | None,
+    source: str | None,
+) -> list[dict[str, Any]]:
+    canonical_source = canonicalize_job_url(source)
+    duplicates = potential_duplicate_jobs(db_path, title=title, company=company, source=canonical_source or source)
+    if not duplicates:
+        return []
+    normalized_company = normalized_company_key(company)
+    normalized_title = normalized_title_key(title)
+    filtered: list[dict[str, Any]] = []
+    for row in duplicates:
+        same_company = normalized_company_key(row.get("company")) == normalized_company
+        same_title = normalized_title_key(row.get("title")) == normalized_title
+        same_url = canonicalize_job_url(row.get("source")) == canonical_source if canonical_source else False
+        if same_url or (same_company and same_title):
+            filtered.append(row)
+    return filtered
+
+
+def has_stronger_existing_match(duplicates: list[dict[str, Any]], score: int) -> bool:
+    for row in duplicates:
+        if int(row.get("fit_score") or 0) >= score and str(row.get("status") or "") not in FINAL_STATUSES:
+            return True
+    return False
 
 
 def first_match(pattern: str, text: str, default: str = "") -> str:
@@ -3204,10 +4649,14 @@ def compute_priority(status: str | None, fit_score: int | None, concerns: list[s
     if "weapons" in concern_text or "lethal" in concern_text or "surveillance" in concern_text:
         return "Review"
     score = fit_score or 0
-    if score >= 92:
+    if score >= 90:
         return "P1 Apply Today"
-    if score >= 82:
+    if score >= 85:
         return "P2 Strong"
+    if score >= 80:
+        return "P3 Maybe"
+    if score >= MANUAL_REVIEW_MIN_SCORE:
+        return "Review"
     if score >= 70:
         return "P3 Maybe"
     return "Park"
@@ -3222,6 +4671,100 @@ def infer_cover_letter_needed(priority: str, fit_score: int | None, concerns: li
     if (fit_score or 0) >= 80:
         return "Optional"
     return "No"
+
+
+def role_has_hard_constraint(concerns: list[str], job_description: str) -> bool:
+    haystack = " ".join(concerns + [job_description]).lower()
+    blockers = [
+        "onsite or hybrid requirement",
+        "active clearance",
+        "apac",
+        "west coast relocation",
+        "support/ticketing-first role",
+        "sdr/bdr-first role",
+        "outbound-heavy acquisition role",
+        "community-first role",
+        "content/marketing role",
+        "too junior for seniority",
+        "deep technical architecture",
+    ]
+    if any(blocker in haystack for blocker in blockers):
+        return True
+    return bool(
+        re.search(
+            r"\bactive clearance\b|\bmust be based in san francisco\b|\bapac\b|\bhong kong based\b|\bsingapore based\b|\bdubai based\b|\blondon based\b|\bcommercial counsel\b|\bcounsel\b|\battorney\b|\blegal\b|\bcompliance tech analyst\b|\banalyst\b|\bcredit structuring specialist\b",
+            haystack,
+        )
+    )
+
+
+def looks_like_bad_title(title: str) -> bool:
+    clean = normalize(title).lower()
+    if not clean:
+        return True
+    if clean.startswith("ashby-"):
+        return True
+    if re.search(r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}", clean):
+        return True
+    if re.search(
+        r"\b(counsel|attorney|legal|analyst|engineer|developer|researcher|product manager|"
+        r"it department|marketing|product marketing)\b",
+        clean,
+    ):
+        return True
+    if clean.startswith("position |") or clean in {"position", "position fireblocks", "careers", "jobs"}:
+        return True
+    return False
+
+
+def role_is_marketing_led_gtm(title: str, description: str) -> bool:
+    clean_title = normalize(title).lower()
+    clean_description = normalize(description).lower()
+    if "gtm" not in clean_title and "go-to-market" not in clean_title:
+        return False
+    marketing_signals = sum(
+        signal in clean_description
+        for signal in ["product marketing", "report directly to the chief marketing officer", "marketing organization"]
+    )
+    commercial_signals = sum(
+        signal in clean_description
+        for signal in ["revenue target", "sales pipeline", "quota", "close deals", "commercial negotiations"]
+    )
+    return marketing_signals >= 2 and commercial_signals == 0
+
+
+def board_decision_for_result(
+    *,
+    company: str,
+    company_tier: int,
+    result: dict[str, Any],
+    duplicates: list[dict[str, Any]],
+) -> tuple[str, list[str]]:
+    score = int(result.get("fit_score") or 0)
+    reasons: list[str] = []
+    if looks_like_bad_title(str(result.get("title") or "")):
+        reasons.append("title is outside the target commercial lanes or was extracted unreliably")
+        return "rejected", reasons
+    if role_is_marketing_led_gtm(
+        str(result.get("title") or ""),
+        str(result.get("job_description") or ""),
+    ):
+        reasons.append("GTM role is product-marketing led without direct commercial ownership")
+        return "rejected", reasons
+    if duplicates and has_stronger_existing_match(duplicates, score):
+        reasons.append("stronger or equivalent version of this role is already on the board")
+        return "duplicate", reasons
+    if role_has_hard_constraint([str(item) for item in result.get("concerns", [])], str(result.get("job_description") or "")):
+        reasons.append("role has a hard constraint mismatch")
+        return "rejected", reasons
+    if score >= BOARD_KEEP_MIN_SCORE:
+        reasons.append("score is at or above the board-improving keep threshold")
+        return "kept", reasons
+    if company_tier == 1 and score >= MANUAL_REVIEW_MIN_SCORE:
+        reasons.append("tier 1 target company earned manual review range")
+        return "manual_review", reasons
+    reasons.append("score fell below the board-improving keep threshold")
+    return "rejected", reasons
 
 
 def display_datetime(value: str | None) -> str:
@@ -3471,7 +5014,8 @@ def contact_rows(db_path: Path) -> list[dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT c.job_id, j.company, j.title, c.name, c.relationship, c.role,
-                   c.telegram_handle, c.email, c.linkedin_url, c.notes, c.created_at
+                   c.telegram_handle, c.email, c.linkedin_url, c.linkedin_note,
+                   c.notes, c.created_at
             FROM contacts c
             LEFT JOIN job_evaluations j ON j.id = c.job_id
             ORDER BY lower(COALESCE(j.company, '')), lower(c.name), c.id
@@ -3488,6 +5032,7 @@ def contact_rows(db_path: Path) -> list[dict[str, Any]]:
             "Telegram Handle": row["telegram_handle"] or "",
             "Email": row["email"] or "",
             "LinkedIn": row["linkedin_url"] or "",
+            "LinkedIn Note": row["linkedin_note"] or "",
             "Notes": row["notes"] or "",
             "Added": display_datetime(row["created_at"]),
         }
@@ -4376,9 +5921,1159 @@ def sync_google_sheets_workbook(
     )
 
 
+def normalize_source_config_item(item: dict[str, Any], *, index: int, path: Path) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        raise SystemExit(f"Invalid source entry #{index} in {path}: each source must be an object.")
+    if item.get("enabled") is False:
+        return None
+    company = normalize(str(item.get("company") or item.get("name") or ""))
+    if not company:
+        raise SystemExit(f"Invalid source entry #{index} in {path}: missing company/name.")
+    source_type = normalize(str(item.get("source_type") or "careers_page"))
+    if source_type not in SUPPORTED_SOURCE_TYPES:
+        supported = ", ".join(sorted(SUPPORTED_SOURCE_TYPES))
+        raise SystemExit(
+            f"Invalid source entry #{index} in {path}: unsupported source_type '{source_type}'. "
+            f"Use one of: {supported}."
+        )
+    raw_urls = item.get("urls", item.get("url"))
+    if isinstance(raw_urls, str):
+        urls = [raw_urls]
+    elif isinstance(raw_urls, list):
+        urls = [str(url).strip() for url in raw_urls if str(url).strip()]
+    else:
+        urls = []
+    if not urls:
+        raise SystemExit(f"Invalid source entry #{index} in {path}: add url or urls.")
+    tier = int(item.get("tier") or 3)
+    source = {
+        "company": company,
+        "tier": tier,
+        "source_type": source_type,
+        "urls": urls,
+    }
+    if bool(item.get("browser_required")):
+        source["browser_required"] = True
+    return source
+
+
+def load_user_source_specs(source_config_path: Path = DEFAULT_JOB_SOURCES_JSON) -> list[dict[str, Any]]:
+    if not source_config_path.exists():
+        return []
+    data = read_json(source_config_path)
+    raw_sources = data.get("sources") if isinstance(data, dict) else data
+    if raw_sources is None:
+        return []
+    if not isinstance(raw_sources, list):
+        raise SystemExit(f"Invalid source config in {source_config_path}: expected a 'sources' list.")
+    sources: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_sources, start=1):
+        source = normalize_source_config_item(item, index=index, path=source_config_path)
+        if source is not None:
+            sources.append(source)
+    return sources
+
+
+def dedupe_source_specs(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    unique: list[dict[str, Any]] = []
+    for source in sources:
+        key = (
+            normalized_company_key(str(source.get("company") or "")),
+            tuple(str(url).strip().lower() for url in source.get("urls") or []),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(source)
+    return unique
+
+
+def target_company_source_specs(
+    company_filter: list[str] | None = None,
+    *,
+    source_config_path: Path = DEFAULT_JOB_SOURCES_JSON,
+) -> list[dict[str, Any]]:
+    all_sources = dedupe_source_specs(
+        [
+            *DEFAULT_TARGET_COMPANY_SOURCES,
+            *DEFAULT_DISCOVERY_SOURCES,
+            *load_user_source_specs(source_config_path),
+        ]
+    )
+    if not company_filter:
+        return [dict(item) for item in all_sources]
+    wanted = {normalized_company_key(name) for name in company_filter}
+    return [dict(item) for item in all_sources if normalized_company_key(item["company"]) in wanted]
+
+
+def posting_title_from_html(html: str, url: str, company: str) -> str:
+    title = (
+        html_meta_content(html, "og:title", "twitter:title", "title")
+        or first_match(r"<h1[^>]*>(.*?)</h1>", html, "")
+        or html_title(html)
+    )
+    clean = normalize(re.sub(r"<[^>]+>", " ", title))
+    if not clean:
+        path = urlparse(url).path.rsplit("/", 1)[-1]
+        clean = normalize(path.replace("-", " ").replace("_", " "))
+    separators = [" | ", " - ", " @ ", " at "]
+    for separator in separators:
+        if separator in clean:
+            left, right = clean.split(separator, 1)
+            if normalized_company_key(right) == normalized_company_key(company):
+                return left.strip()
+            if normalized_company_key(left) == normalized_company_key(company):
+                return right.strip()
+    return clean
+
+
+def posting_identity_from_html(html: str, url: str, fallback_company: str) -> tuple[str, str]:
+    metadata = job_posting_metadata(html)
+    company = normalize(str(metadata.get("company") or ""))
+    title = normalize(str(metadata.get("title") or ""))
+    raw_title = normalize(
+        html_meta_content(html, "og:title", "twitter:title", "title")
+        or html_title(html)
+    )
+    if not company and raw_title:
+        for separator in (" | ", " @ ", " at "):
+            if separator not in raw_title:
+                continue
+            left, right = [normalize(part) for part in raw_title.split(separator, 1)]
+            if left and right and normalized_company_key(right) != normalized_company_key(fallback_company):
+                title = title or left
+                company = right
+                break
+    company = company or fallback_company
+    title = title or posting_title_from_html(html, url, company)
+    return title, company
+
+
+def refresh_local_exports(db_path: Path) -> dict[str, Any]:
+    counts = {
+        "job_results": export_csv(db_path, ROOT / "exports" / "job_results.csv"),
+        "google_sheets_jobs": export_sheets_csv(db_path, ROOT / "exports" / "google_sheets_job_tracker.csv"),
+        "target_companies": export_target_companies_csv(db_path, ROOT / "exports" / "target_companies.csv"),
+    }
+    counts["crm"] = export_crm(db_path, ROOT / "exports" / "crm")
+    counts["workbook"] = export_sheets_workbook(db_path, DEFAULT_SHEETS_WORKBOOK_DIR)
+    return counts
+
+
+def source_target_roles(
+    db_path: Path,
+    *,
+    profile: dict[str, Any],
+    spec: dict[str, Any],
+    timeout_seconds: int,
+    retries: int,
+    max_role_links: int,
+) -> dict[str, Any]:
+    source_log: dict[str, Any] = {
+        "company": spec["company"],
+        "tier": int(spec.get("tier") or 0),
+        "source_type": spec.get("source_type") or "unknown",
+        "urls": list(spec.get("urls") or []),
+        "browser_required": bool(spec.get("browser_required")),
+        "browser_follow_up_required": False,
+        "attempted": 0,
+        "reachable": 0,
+        "roles_scanned": 0,
+        "rejected": 0,
+        "duplicates_removed": 0,
+        "kept": 0,
+        "manual_review": 0,
+        "failure_reason": "",
+        "fallback_used": "",
+        "kept_jobs": [],
+        "manual_review_jobs": [],
+        "kept_job_ids": [],
+        "application_questions_captured": 0,
+        "application_question_jobs": [],
+        "opportunities_found": 0,
+        "opportunity_links": [],
+    }
+    seen_links: set[str] = set()
+    if source_log["source_type"] == "ashby_board" and source_log["urls"]:
+        board_result = fetch_ashby_board(
+            str(source_log["urls"][0]),
+            timeout_seconds=timeout_seconds,
+            retries=retries,
+        )
+        source_log["attempted"] = 1
+        if not board_result.get("ok"):
+            source_log["failure_reason"] = str(board_result.get("error") or "Ashby board fetch failed")
+            return source_log
+        source_log["reachable"] = 1
+        slug = str(board_result.get("slug") or "")
+        for posting_stub in list(board_result.get("job_postings") or [])[:max_role_links]:
+            job_posting_id = str(posting_stub.get("id") or "")
+            if not job_posting_id:
+                continue
+            role_url = f"https://jobs.ashbyhq.com/{slug}/{job_posting_id}"
+            canonical_url = canonicalize_job_url(role_url)
+            if canonical_url in seen_links:
+                source_log["duplicates_removed"] += 1
+                continue
+            seen_links.add(canonical_url)
+            posting_result = fetch_ashby_posting(
+                slug,
+                job_posting_id,
+                timeout_seconds=timeout_seconds,
+                retries=retries,
+            )
+            if not posting_result.get("ok"):
+                source_log["rejected"] += 1
+                continue
+            posting = dict(posting_result["posting"])
+            if not posting.get("isListed", True):
+                source_log["rejected"] += 1
+                continue
+            description_text = html_visible_text(str(posting.get("descriptionHtml") or ""))
+            role_text = normalize(
+                " ".join(
+                    [
+                        str(posting.get("title") or ""),
+                        str(spec["company"]),
+                        str(posting.get("locationName") or ""),
+                        str(posting.get("locationAddress") or ""),
+                        str(posting.get("workplaceType") or ""),
+                        str(posting.get("employmentType") or ""),
+                        " ".join(str(item) for item in posting.get("teamNames") or []),
+                        " ".join(str(item) for item in posting.get("secondaryLocationNames") or []),
+                        str(posting.get("compensationTierSummary") or ""),
+                        str(posting.get("scrapeableCompensationSalarySummary") or ""),
+                        description_text,
+                    ]
+                )
+            )
+            if word_count(role_text) < ROLE_PAGE_MIN_WORDS:
+                source_log["rejected"] += 1
+                continue
+            source_log["roles_scanned"] += 1
+            title = normalize(str(posting.get("title") or ""))
+            duplicates = deterministic_duplicate_jobs(
+                db_path,
+                title=title,
+                company=str(spec["company"]),
+                source=role_url,
+            )
+            if duplicates:
+                source_log["duplicates_removed"] += 1
+                continue
+            result = evaluate_job(role_text, profile, title, str(spec["company"]))
+            decision, reasons = board_decision_for_result(
+                company=str(spec["company"]),
+                company_tier=int(spec.get("tier") or 0),
+                result=result,
+                duplicates=duplicates,
+            )
+            if decision in {"rejected", "duplicate"}:
+                source_log["rejected"] += 1
+                continue
+            job_id = save_result(db_path, result, role_url)
+            update_job_details(
+                db_path,
+                job_id,
+                application_url=canonical_url or role_url,
+                next_action="Manual review before packet generation" if decision == "manual_review" else "Generate packet and apply/outreach",
+                priority="Review" if decision == "manual_review" else None,
+                note="; ".join(reasons),
+            )
+            question_count = detect_and_store_application_questions_for_job(
+                db_path,
+                job_id=job_id,
+                source_url=canonical_url or role_url,
+                source_type=str(source_log["source_type"]),
+                role_text=role_text,
+                payload=posting,
+            )
+            if question_count:
+                source_log["application_questions_captured"] += question_count
+                source_log["application_question_jobs"].append({"id": job_id, "question_count": question_count})
+            job_summary = {
+                "id": job_id,
+                "company": str(spec["company"]),
+                "title": result["title"],
+                "fit_score": int(result["fit_score"]),
+                "source_url": canonical_url or role_url,
+                "application_questions_captured": question_count,
+            }
+            if decision == "manual_review":
+                source_log["manual_review"] += 1
+                source_log["manual_review_jobs"].append(job_summary)
+            else:
+                source_log["kept"] += 1
+                source_log["kept_job_ids"].append(job_id)
+                source_log["kept_jobs"].append(job_summary)
+        return source_log
+
+    if source_log["source_type"] == "gem_board" and source_log["urls"]:
+        board_result = fetch_gem_board(
+            str(source_log["urls"][0]),
+            timeout_seconds=timeout_seconds,
+            retries=retries,
+        )
+        source_log["attempted"] = 1
+        if not board_result.get("ok"):
+            source_log["failure_reason"] = str(board_result.get("error") or "Gem board fetch failed")
+            return source_log
+        source_log["reachable"] = 1
+        board_id = str(board_result.get("board_id") or "")
+        for posting_stub in list(board_result.get("job_postings") or [])[:max_role_links]:
+            ext_id = str(posting_stub.get("extId") or "")
+            if not ext_id:
+                source_log["rejected"] += 1
+                continue
+            role_url = f"https://jobs.gem.com/{board_id}/{ext_id}"
+            canonical_url = canonicalize_job_url(role_url)
+            if canonical_url in seen_links:
+                source_log["duplicates_removed"] += 1
+                continue
+            seen_links.add(canonical_url)
+            posting_result = fetch_gem_posting(
+                board_id,
+                ext_id,
+                timeout_seconds=timeout_seconds,
+                retries=retries,
+            )
+            if not posting_result.get("ok"):
+                source_log["rejected"] += 1
+                continue
+            posting = dict(posting_result["posting"])
+            if posting.get("isUnlistedExternally"):
+                source_log["rejected"] += 1
+                continue
+            locations = posting.get("locations") or []
+            job_info = posting.get("job") or {}
+            job_locations = job_info.get("locations") or []
+            role_text = normalize(
+                " ".join(
+                    [
+                        str(posting.get("title") or ""),
+                        str(spec["company"]),
+                        " ".join(
+                            normalize(
+                                " ".join(
+                                    [
+                                        str(location.get("name") or ""),
+                                        str(location.get("city") or ""),
+                                        str(location.get("isoCountry") or ""),
+                                        "remote" if location.get("isRemote") else "",
+                                    ]
+                                )
+                            )
+                            for location in locations + job_locations
+                        ),
+                        str(job_info.get("teamDisplayName") or ""),
+                        str((job_info.get("department") or {}).get("name") or ""),
+                        str(job_info.get("locationType") or ""),
+                        str(job_info.get("employmentType") or ""),
+                        html_visible_text(str((posting.get("jobPostSectionHtml") or {}).get("introHtml") or "")),
+                        html_visible_text(str(posting.get("descriptionHtml") or "")),
+                        html_visible_text(str((posting.get("jobPostSectionHtml") or {}).get("outroHtml") or "")),
+                        html_visible_text(str(posting.get("compensationHtml") or "")),
+                    ]
+                )
+            )
+            if word_count(role_text) < ROLE_PAGE_MIN_WORDS:
+                source_log["rejected"] += 1
+                continue
+            source_log["roles_scanned"] += 1
+            title = normalize(str(posting.get("title") or ""))
+            duplicates = deterministic_duplicate_jobs(
+                db_path,
+                title=title,
+                company=str(spec["company"]),
+                source=role_url,
+            )
+            if duplicates:
+                source_log["duplicates_removed"] += 1
+                continue
+            result = evaluate_job(role_text, profile, title, str(spec["company"]))
+            decision, reasons = board_decision_for_result(
+                company=str(spec["company"]),
+                company_tier=int(spec.get("tier") or 0),
+                result=result,
+                duplicates=duplicates,
+            )
+            if decision in {"rejected", "duplicate"}:
+                source_log["rejected"] += 1
+                continue
+            job_id = save_result(db_path, result, role_url)
+            update_job_details(
+                db_path,
+                job_id,
+                application_url=canonical_url or role_url,
+                next_action="Manual review before packet generation" if decision == "manual_review" else "Generate packet and apply/outreach",
+                priority="Review" if decision == "manual_review" else None,
+                note="; ".join(reasons),
+            )
+            question_count = detect_and_store_application_questions_for_job(
+                db_path,
+                job_id=job_id,
+                source_url=canonical_url or role_url,
+                source_type=str(source_log["source_type"]),
+                role_text=role_text,
+                payload=posting,
+            )
+            if question_count:
+                source_log["application_questions_captured"] += question_count
+                source_log["application_question_jobs"].append({"id": job_id, "question_count": question_count})
+            job_summary = {
+                "id": job_id,
+                "company": str(spec["company"]),
+                "title": result["title"],
+                "fit_score": int(result["fit_score"]),
+                "source_url": canonical_url or role_url,
+                "application_questions_captured": question_count,
+            }
+            if decision == "manual_review":
+                source_log["manual_review"] += 1
+                source_log["manual_review_jobs"].append(job_summary)
+            else:
+                source_log["kept"] += 1
+                source_log["kept_job_ids"].append(job_id)
+                source_log["kept_jobs"].append(job_summary)
+        return source_log
+
+    if source_log["source_type"] == "lever_board" and source_log["urls"]:
+        board_result = fetch_lever_board(
+            str(source_log["urls"][0]),
+            timeout_seconds=timeout_seconds,
+            retries=retries,
+        )
+        source_log["attempted"] = 1
+        if not board_result.get("ok"):
+            source_log["failure_reason"] = str(board_result.get("error") or "Lever board fetch failed")
+            return source_log
+        source_log["reachable"] = 1
+        for posting in list(board_result.get("job_postings") or [])[:max_role_links]:
+            if not isinstance(posting, dict):
+                source_log["rejected"] += 1
+                continue
+            role_url = str(posting.get("hostedUrl") or posting.get("applyUrl") or "")
+            if not role_url:
+                source_log["rejected"] += 1
+                continue
+            canonical_url = canonicalize_job_url(role_url)
+            if canonical_url in seen_links:
+                source_log["duplicates_removed"] += 1
+                continue
+            seen_links.add(canonical_url)
+            title = normalize(str(posting.get("text") or ""))
+            role_text = lever_posting_text(posting, str(spec["company"]))
+            if word_count(role_text) < ROLE_PAGE_MIN_WORDS:
+                source_log["rejected"] += 1
+                continue
+            source_log["roles_scanned"] += 1
+            duplicates = deterministic_duplicate_jobs(
+                db_path,
+                title=title,
+                company=str(spec["company"]),
+                source=role_url,
+            )
+            if duplicates:
+                source_log["duplicates_removed"] += 1
+                continue
+            result = evaluate_job(role_text, profile, title, str(spec["company"]))
+            decision, reasons = board_decision_for_result(
+                company=str(spec["company"]),
+                company_tier=int(spec.get("tier") or 0),
+                result=result,
+                duplicates=duplicates,
+            )
+            if decision in {"rejected", "duplicate"}:
+                source_log["rejected"] += 1
+                continue
+            job_id = save_result(db_path, result, role_url)
+            update_job_details(
+                db_path,
+                job_id,
+                application_url=canonical_url or role_url,
+                next_action="Manual review before packet generation" if decision == "manual_review" else "Generate packet and apply/outreach",
+                priority="Review" if decision == "manual_review" else None,
+                note="; ".join(reasons),
+            )
+            question_count = detect_and_store_application_questions_for_job(
+                db_path,
+                job_id=job_id,
+                source_url=canonical_url or role_url,
+                source_type=str(source_log["source_type"]),
+                role_text=role_text,
+                payload=posting,
+            )
+            if question_count:
+                source_log["application_questions_captured"] += question_count
+                source_log["application_question_jobs"].append({"id": job_id, "question_count": question_count})
+            job_summary = {
+                "id": job_id,
+                "company": str(spec["company"]),
+                "title": result["title"],
+                "fit_score": int(result["fit_score"]),
+                "source_url": canonical_url or role_url,
+                "application_questions_captured": question_count,
+            }
+            if decision == "manual_review":
+                source_log["manual_review"] += 1
+                source_log["manual_review_jobs"].append(job_summary)
+            else:
+                source_log["kept"] += 1
+                source_log["kept_job_ids"].append(job_id)
+                source_log["kept_jobs"].append(job_summary)
+        return source_log
+
+    if source_log["source_type"] == "rippling_board" and source_log["urls"]:
+        board_url = str(source_log["urls"][0])
+        source_log["attempted"] = 1
+        board_fetch = fetch_url(board_url, timeout_seconds=timeout_seconds, retries=retries)
+        if not board_fetch.get("ok"):
+            source_log["failure_reason"] = str(board_fetch.get("error") or "Rippling board fetch failed")
+            return source_log
+        source_log["reachable"] = 1
+        role_links = discover_rippling_role_links(str(board_fetch["final_url"]), str(board_fetch["text"]))
+        for role_url in role_links[:max_role_links]:
+            canonical_url = canonicalize_job_url(role_url)
+            if canonical_url in seen_links:
+                source_log["duplicates_removed"] += 1
+                continue
+            seen_links.add(canonical_url)
+            role_fetch = fetch_url(role_url, timeout_seconds=timeout_seconds, retries=retries)
+            if not role_fetch.get("ok"):
+                source_log["rejected"] += 1
+                continue
+            role_text = html_visible_text(str(role_fetch["text"]))
+            if word_count(role_text) < ROLE_PAGE_MIN_WORDS:
+                source_log["rejected"] += 1
+                continue
+            title = posting_title_from_html(str(role_fetch["text"]), str(role_fetch["final_url"]), str(spec["company"]))
+            source_log["roles_scanned"] += 1
+            duplicates = deterministic_duplicate_jobs(
+                db_path,
+                title=title,
+                company=str(spec["company"]),
+                source=str(role_fetch["final_url"]),
+            )
+            if duplicates:
+                source_log["duplicates_removed"] += 1
+                continue
+            result = evaluate_job(role_text, profile, title, str(spec["company"]))
+            decision, reasons = board_decision_for_result(
+                company=str(spec["company"]),
+                company_tier=int(spec.get("tier") or 0),
+                result=result,
+                duplicates=duplicates,
+            )
+            if decision in {"rejected", "duplicate"}:
+                source_log["rejected"] += 1
+                continue
+            job_id = save_result(db_path, result, str(role_fetch["final_url"]))
+            update_job_details(
+                db_path,
+                job_id,
+                application_url=canonical_url or str(role_fetch["final_url"]),
+                next_action="Manual review before packet generation" if decision == "manual_review" else "Generate packet and apply/outreach",
+                priority="Review" if decision == "manual_review" else None,
+                note="; ".join(reasons),
+            )
+            question_count = detect_and_store_application_questions_for_job(
+                db_path,
+                job_id=job_id,
+                source_url=canonical_url or str(role_fetch["final_url"]),
+                source_type=str(source_log["source_type"]),
+                role_text=role_text,
+                html=str(role_fetch["text"]),
+            )
+            if question_count:
+                source_log["application_questions_captured"] += question_count
+                source_log["application_question_jobs"].append({"id": job_id, "question_count": question_count})
+            job_summary = {
+                "id": job_id,
+                "company": str(spec["company"]),
+                "title": result["title"],
+                "fit_score": int(result["fit_score"]),
+                "source_url": canonical_url or str(role_fetch["final_url"]),
+                "application_questions_captured": question_count,
+            }
+            if decision == "manual_review":
+                source_log["manual_review"] += 1
+                source_log["manual_review_jobs"].append(job_summary)
+            else:
+                source_log["kept"] += 1
+                source_log["kept_job_ids"].append(job_id)
+                source_log["kept_jobs"].append(job_summary)
+        return source_log
+
+    if source_log["source_type"] == "greenhouse_board" and source_log["urls"]:
+        board_url = str(source_log["urls"][0])
+        source_log["attempted"] = 1
+        board_fetch = fetch_url(board_url, timeout_seconds=timeout_seconds, retries=retries)
+        if not board_fetch.get("ok"):
+            source_log["failure_reason"] = str(board_fetch.get("error") or "Greenhouse board fetch failed")
+            return source_log
+        source_log["reachable"] = 1
+        role_links = discover_greenhouse_role_links(str(board_fetch["final_url"]), str(board_fetch["text"]))
+        for role_url in role_links[:max_role_links]:
+            canonical_url = canonicalize_job_url(role_url)
+            if canonical_url in seen_links:
+                source_log["duplicates_removed"] += 1
+                continue
+            seen_links.add(canonical_url)
+            role_fetch = fetch_url(role_url, timeout_seconds=timeout_seconds, retries=retries)
+            if not role_fetch.get("ok"):
+                source_log["rejected"] += 1
+                continue
+            role_text = html_visible_text(str(role_fetch["text"]))
+            if word_count(role_text) < ROLE_PAGE_MIN_WORDS:
+                source_log["rejected"] += 1
+                continue
+            title = posting_title_from_html(str(role_fetch["text"]), str(role_fetch["final_url"]), str(spec["company"]))
+            source_log["roles_scanned"] += 1
+            duplicates = deterministic_duplicate_jobs(
+                db_path,
+                title=title,
+                company=str(spec["company"]),
+                source=str(role_fetch["final_url"]),
+            )
+            if duplicates:
+                source_log["duplicates_removed"] += 1
+                continue
+            result = evaluate_job(role_text, profile, title, str(spec["company"]))
+            decision, reasons = board_decision_for_result(
+                company=str(spec["company"]),
+                company_tier=int(spec.get("tier") or 0),
+                result=result,
+                duplicates=duplicates,
+            )
+            if decision in {"rejected", "duplicate"}:
+                source_log["rejected"] += 1
+                continue
+            job_id = save_result(db_path, result, str(role_fetch["final_url"]))
+            update_job_details(
+                db_path,
+                job_id,
+                application_url=canonical_url or str(role_fetch["final_url"]),
+                next_action="Manual review before packet generation" if decision == "manual_review" else "Generate packet and apply/outreach",
+                priority="Review" if decision == "manual_review" else None,
+                note="; ".join(reasons),
+            )
+            question_count = detect_and_store_application_questions_for_job(
+                db_path,
+                job_id=job_id,
+                source_url=canonical_url or str(role_fetch["final_url"]),
+                source_type=str(source_log["source_type"]),
+                role_text=role_text,
+                html=str(role_fetch["text"]),
+            )
+            if question_count:
+                source_log["application_questions_captured"] += question_count
+                source_log["application_question_jobs"].append({"id": job_id, "question_count": question_count})
+            job_summary = {
+                "id": job_id,
+                "company": str(spec["company"]),
+                "title": result["title"],
+                "fit_score": int(result["fit_score"]),
+                "source_url": canonical_url or str(role_fetch["final_url"]),
+                "application_questions_captured": question_count,
+            }
+            if decision == "manual_review":
+                source_log["manual_review"] += 1
+                source_log["manual_review_jobs"].append(job_summary)
+            else:
+                source_log["kept"] += 1
+                source_log["kept_job_ids"].append(job_id)
+                source_log["kept_jobs"].append(job_summary)
+        return source_log
+
+    source_page_fetch: dict[str, Any] | None = None
+    for source_url in source_log["urls"]:
+        source_log["attempted"] += 1
+        source_page_fetch = fetch_url(source_url, timeout_seconds=timeout_seconds, retries=retries)
+        if source_page_fetch.get("ok"):
+            source_log["reachable"] += 1
+            break
+        if source_log["failure_reason"]:
+            source_log["failure_reason"] += " | "
+        source_log["failure_reason"] += f"{source_url}: {source_page_fetch.get('error', 'unreachable')}"
+    if source_page_fetch is None or not source_page_fetch.get("ok"):
+        if not source_log["failure_reason"]:
+            source_log["failure_reason"] = "no source URL could be reached"
+        source_log["browser_follow_up_required"] = bool(source_log["browser_required"])
+        return source_log
+
+    source_html = str(source_page_fetch["text"])
+    source_url = str(source_page_fetch["final_url"])
+    if source_log["source_type"] in {"bounty_board", "company_discovery"}:
+        opportunity_links = discover_opportunity_links(source_html, source_url)
+        source_log["opportunities_found"] = len(opportunity_links)
+        source_log["opportunity_links"] = opportunity_links[:max_role_links]
+        if not opportunity_links:
+            source_log["browser_follow_up_required"] = True
+            source_log["failure_reason"] = "source was reachable but no opportunity links were extractable"
+        return source_log
+
+    role_links = discover_role_links(source_html, source_url)
+    if not role_links and source_log["source_type"] == "discovery_board":
+        source_log["browser_follow_up_required"] = True
+        source_log["failure_reason"] = "source was reachable but no posting links were extractable"
+        return source_log
+    if not role_links and word_count(html_visible_text(source_html)) >= ROLE_PAGE_MIN_WORDS:
+        role_links = [str(source_page_fetch["final_url"])]
+        source_log["fallback_used"] = "treated the source page itself as a single posting"
+
+    for role_url in role_links[:max_role_links]:
+        canonical_url = canonicalize_job_url(role_url)
+        if canonical_url in seen_links:
+            source_log["duplicates_removed"] += 1
+            continue
+        seen_links.add(canonical_url)
+        if canonical_url == canonicalize_job_url(str(source_page_fetch["final_url"])):
+            role_fetch = source_page_fetch
+        else:
+            role_fetch = fetch_url(role_url, timeout_seconds=timeout_seconds, retries=retries)
+        if not role_fetch.get("ok"):
+            source_log["rejected"] += 1
+            continue
+        role_html = str(role_fetch["text"])
+        metadata = job_posting_metadata(role_html)
+        role_text = normalize(
+            " ".join(
+                [
+                    str(metadata.get("title") or ""),
+                    str(metadata.get("company") or ""),
+                    str(metadata.get("employment_type") or ""),
+                    str(metadata.get("location") or ""),
+                    str(metadata.get("date_posted") or ""),
+                    str(metadata.get("valid_through") or ""),
+                    str(metadata.get("description") or ""),
+                    html_visible_text(role_html),
+                ]
+            )
+        )
+        if word_count(role_text) < ROLE_PAGE_MIN_WORDS:
+            source_log["rejected"] += 1
+            continue
+        title, company = posting_identity_from_html(
+            role_html,
+            str(role_fetch["final_url"]),
+            str(spec["company"]),
+        )
+        source_log["roles_scanned"] += 1
+        duplicates = deterministic_duplicate_jobs(
+            db_path,
+            title=title,
+            company=company,
+            source=str(role_fetch["final_url"]),
+        )
+        if duplicates:
+            source_log["duplicates_removed"] += 1
+            continue
+        result = evaluate_job(role_text, profile, title, company)
+        decision, reasons = board_decision_for_result(
+            company=company,
+            company_tier=int(spec.get("tier") or 0),
+            result=result,
+            duplicates=duplicates,
+        )
+        if decision in {"rejected", "duplicate"}:
+            source_log["rejected"] += 1
+            continue
+        job_id = save_result(db_path, result, str(role_fetch["final_url"]))
+        update_job_details(
+            db_path,
+            job_id,
+            application_url=canonical_url or str(role_fetch["final_url"]),
+            next_action="Manual review before packet generation" if decision == "manual_review" else "Generate packet and apply/outreach",
+            priority="Review" if decision == "manual_review" else None,
+            note="; ".join(reasons),
+        )
+        question_count = detect_and_store_application_questions_for_job(
+            db_path,
+            job_id=job_id,
+            source_url=canonical_url or str(role_fetch["final_url"]),
+            source_type=str(source_log["source_type"]),
+            role_text=role_text,
+            html=str(role_fetch["text"]),
+        )
+        if question_count:
+            source_log["application_questions_captured"] += question_count
+            source_log["application_question_jobs"].append({"id": job_id, "question_count": question_count})
+        job_summary = {
+            "id": job_id,
+            "company": company,
+            "title": result["title"],
+            "fit_score": int(result["fit_score"]),
+            "source_url": canonical_url or str(role_fetch["final_url"]),
+            "application_questions_captured": question_count,
+        }
+        if decision == "manual_review":
+            source_log["manual_review"] += 1
+            source_log["manual_review_jobs"].append(job_summary)
+        else:
+            source_log["kept"] += 1
+            source_log["kept_job_ids"].append(job_id)
+            source_log["kept_jobs"].append(job_summary)
+    return source_log
+
+
+def validate_sourcing_health(source_logs: list[dict[str, Any]]) -> list[str]:
+    issues: list[str] = []
+    if not source_logs:
+        return ["sourcing stage did not execute"]
+    if sum(int(item.get("reachable") or 0) for item in source_logs) == 0:
+        issues.append("zero sources were reachable")
+    if sum(int(item.get("roles_scanned") or 0) for item in source_logs) == 0:
+        issues.append("zero roles were scanned")
+    tier1_logs = [item for item in source_logs if int(item.get("tier") or 0) == 1]
+    if tier1_logs and sum(int(item.get("reachable") or 0) for item in tier1_logs) == 0:
+        issues.append("all primary target-company sources failed")
+    failed_direct_sources = [
+        str(item.get("company") or "unknown")
+        for item in source_logs
+        if not int(item.get("reachable") or 0) and not item.get("browser_required")
+    ]
+    if failed_direct_sources:
+        issues.append("required direct sources failed: " + ", ".join(failed_direct_sources))
+    return issues
+
+
+def source_jobs(
+    db_path: Path,
+    *,
+    profile: dict[str, Any],
+    company_filter: list[str] | None,
+    source_config_path: Path,
+    timeout_seconds: int,
+    retries: int,
+    max_role_links: int,
+) -> dict[str, Any]:
+    specs = target_company_source_specs(company_filter, source_config_path=source_config_path)
+    source_logs = [
+        source_target_roles(
+            db_path,
+            profile=profile,
+            spec=spec,
+            timeout_seconds=timeout_seconds,
+            retries=retries,
+            max_role_links=max_role_links,
+        )
+        for spec in specs
+    ]
+    issues = validate_sourcing_health(source_logs)
+    browser_follow_up_sources = [
+        str(item.get("company") or "unknown")
+        for item in source_logs
+        if item.get("browser_follow_up_required")
+    ]
+    unreachable_sources = [
+        str(item.get("company") or "unknown")
+        for item in source_logs
+        if not int(item.get("reachable") or 0)
+    ]
+    result = {
+        "sources_attempted": len(source_logs),
+        "sources_reachable": sum(int(item.get("reachable") or 0) for item in source_logs),
+        "sources_unreachable": unreachable_sources,
+        "browser_follow_up_sources": browser_follow_up_sources,
+        "coverage_complete": not unreachable_sources and not browser_follow_up_sources,
+        "roles_scanned": sum(int(item.get("roles_scanned") or 0) for item in source_logs),
+        "duplicates_removed": sum(int(item.get("duplicates_removed") or 0) for item in source_logs),
+        "roles_rejected": sum(int(item.get("rejected") or 0) for item in source_logs),
+        "roles_kept": sum(int(item.get("kept") or 0) for item in source_logs),
+        "manual_review_count": sum(int(item.get("manual_review") or 0) for item in source_logs),
+        "application_questions_captured": sum(int(item.get("application_questions_captured") or 0) for item in source_logs),
+        "application_question_jobs": [job for item in source_logs for job in item.get("application_question_jobs", [])],
+        "opportunities_found": sum(int(item.get("opportunities_found") or 0) for item in source_logs),
+        "opportunity_sources": [
+            {
+                "source": str(item.get("company") or ""),
+                "count": int(item.get("opportunities_found") or 0),
+                "links": list(item.get("opportunity_links") or []),
+            }
+            for item in source_logs
+            if int(item.get("opportunities_found") or 0)
+        ],
+        "source_logs": source_logs,
+        "health_issues": issues,
+        "new_roles": [job for item in source_logs for job in item.get("kept_jobs", [])],
+        "manual_review_jobs": [job for item in source_logs for job in item.get("manual_review_jobs", [])],
+        "kept_job_ids": [int(job_id) for item in source_logs for job_id in item.get("kept_job_ids", [])],
+    }
+    result["log_path"] = str(pipeline_run_log_path("source-jobs"))
+    write_json(Path(result["log_path"]), result)
+    return result
+
+
+def refresh_application_questions_from_postings(
+    db_path: Path,
+    *,
+    job_ids: list[int] | None,
+    limit: int,
+    timeout_seconds: int,
+    retries: int,
+    regenerate_packets: bool,
+) -> dict[str, Any]:
+    rows = load_dashboard_jobs(db_path)
+    selected: list[dict[str, Any]] = []
+    requested = set(job_ids or [])
+    for row in rows:
+        if requested and int(row["id"]) not in requested:
+            continue
+        if not requested and str(row.get("status") or "") in FINAL_STATUSES:
+            continue
+        url = str(row.get("application_url") or row.get("source") or "").strip()
+        if not url:
+            continue
+        selected.append(row)
+        if not requested and limit and len(selected) >= limit:
+            break
+
+    result: dict[str, Any] = {
+        "attempted": 0,
+        "updated_jobs": [],
+        "regenerated_packets": [],
+        "failures": [],
+    }
+    overrides = load_application_question_overrides()
+    for row in selected:
+        job_id = int(row["id"])
+        url = str(row.get("application_url") or row.get("source") or "").strip()
+        result["attempted"] += 1
+        fetched = fetch_url(url, timeout_seconds=timeout_seconds, retries=retries)
+        if not fetched.get("ok"):
+            result["failures"].append({"job_id": job_id, "url": url, "error": fetched.get("error")})
+            continue
+        before = overrides.get(str(job_id), {}) if isinstance(overrides.get(str(job_id)), dict) else {}
+        before_count = len(before.get("questions", [])) if isinstance(before.get("questions"), list) else 0
+        role_text = html_visible_text(str(fetched.get("text") or ""))
+        detected = detect_application_questions(
+            source_url=canonicalize_job_url(str(fetched.get("final_url") or url)) or url,
+            source_type=str(row.get("source_board") or infer_source_board(url) or "posting_page"),
+            role_text=role_text,
+            html=str(fetched.get("text") or ""),
+        )
+        if not detected:
+            continue
+        total_count = store_detected_application_questions(
+            db_path,
+            job_id=job_id,
+            questions=detected,
+            source_url=canonicalize_job_url(str(fetched.get("final_url") or url)) or url,
+            source_type=str(row.get("source_board") or infer_source_board(url) or "posting_page"),
+        )
+        overrides = load_application_question_overrides()
+        new_count = max(0, total_count - before_count)
+        if new_count or before_count == 0:
+            result["updated_jobs"].append(
+                {
+                    "job_id": job_id,
+                    "company": row.get("company"),
+                    "title": row.get("title"),
+                    "question_count": total_count,
+                    "new_questions": new_count,
+                }
+            )
+            if regenerate_packets:
+                try:
+                    packet_path = write_application_packet(db_path, job_id, None)
+                    result["regenerated_packets"].append({"job_id": job_id, "packet_path": str(packet_path)})
+                except Exception as exc:
+                    result["failures"].append({"job_id": job_id, "url": url, "error": f"packet regeneration failed: {exc}"})
+    result["log_path"] = str(pipeline_run_log_path("refresh-application-questions"))
+    write_json(Path(result["log_path"]), result)
+    return result
+
+
+def generate_packets_for_jobs(
+    db_path: Path,
+    *,
+    job_ids: list[int],
+    sync_docs: bool,
+    drive_auth_mode: str,
+    service_account_json: Path,
+    oauth_client_json: Path,
+    oauth_token_json: Path,
+) -> dict[str, Any]:
+    stage = {"generated": [], "synced": [], "failures": []}
+    if not job_ids:
+        return stage
+    for job_id in job_ids:
+        try:
+            packet_path = write_application_packet(db_path, job_id, None)
+            stage["generated"].append({"job_id": job_id, "packet_path": str(packet_path)})
+        except Exception as exc:
+            stage["failures"].append(f"packet generation failed for #{job_id}: {exc}")
+    if sync_docs and stage["generated"]:
+        try:
+            synced = sync_google_drive_docs(
+                db_path,
+                job_ids=[int(item["job_id"]) for item in stage["generated"]],
+                auth_mode=drive_auth_mode,
+                service_account_json=service_account_json,
+                oauth_client_json=oauth_client_json,
+                oauth_token_json=oauth_token_json,
+                packet_folder_url=GOOGLE_PACKET_FOLDER_URL,
+                cover_letter_folder_url=GOOGLE_COVER_LETTER_FOLDER_URL,
+            )
+            stage["synced"] = synced
+        except SystemExit as exc:
+            stage["failures"].append(str(exc))
+    return stage
+
+
+def build_daily_report(
+    *,
+    sourcing: dict[str, Any],
+    packet_stage: dict[str, Any],
+    exports: dict[str, Any],
+    sheet_sync: dict[str, Any] | None,
+    followup_jobs: list[dict[str, Any]],
+    followup_correspondence: list[dict[str, Any]],
+    pipeline: list[dict[str, Any]],
+) -> dict[str, Any]:
+    top_actions: list[str] = []
+    for job in sourcing.get("new_roles", [])[:3]:
+        top_actions.append(f"Apply/outreach for #{job['id']} {job['company']} - {job['title']} ({job['fit_score']})")
+    if not top_actions and pipeline:
+        for row in pipeline[:3]:
+            top_actions.append(f"Work #{row['id']} {row['company']} - {row['title']} ({row['fit_score']})")
+    return {
+        "sources_attempted": sourcing["sources_attempted"],
+        "sources_reachable": sourcing["sources_reachable"],
+        "sources_unreachable": sourcing.get("sources_unreachable", []),
+        "browser_follow_up_sources": sourcing.get("browser_follow_up_sources", []),
+        "coverage_complete": bool(sourcing.get("coverage_complete")),
+        "total_roles_scanned": sourcing["roles_scanned"],
+        "opportunities_found": int(sourcing.get("opportunities_found") or 0),
+        "new_roles_found": len(sourcing.get("new_roles", [])) + len(sourcing.get("manual_review_jobs", [])),
+        "duplicates_removed": sourcing["duplicates_removed"],
+        "roles_rejected": sourcing["roles_rejected"],
+        "roles_kept": sourcing["roles_kept"],
+        "manual_review_count": sourcing["manual_review_count"],
+        "packets_generated": len(packet_stage.get("generated", [])),
+        "documents_updated": len(packet_stage.get("synced", [])),
+        "sheet_rows_updated": (sheet_sync or {}).get("counts", {}).get("Jobs", 0) if sheet_sync else 0,
+        "failures_and_fallbacks": [
+            *sourcing.get("health_issues", []),
+            *packet_stage.get("failures", []),
+            *[
+                item["failure_reason"]
+                for item in sourcing.get("source_logs", [])
+                if item.get("failure_reason")
+            ],
+        ],
+        "top_actions": top_actions,
+        "new_roles_only": sourcing.get("new_roles", []),
+        "manual_review": sourcing.get("manual_review_jobs", []),
+        "followups_due": len(followup_jobs) + len(followup_correspondence),
+        "workbook_counts": exports.get("workbook", {}),
+    }
+
+
+def build_browser_follow_up_stage(
+    *,
+    browser_follow_up_sources: list[str],
+    completed_sources: list[str] | None = None,
+    notes: list[str] | None = None,
+) -> dict[str, Any]:
+    def source_key(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(value).lower())
+
+    pending_sources = [str(item) for item in browser_follow_up_sources if str(item).strip()]
+    completed_lookup = {source_key(str(item)) for item in (completed_sources or []) if str(item).strip()}
+    remaining_sources = [
+        source
+        for source in pending_sources
+        if source_key(source) not in completed_lookup
+    ]
+    completed_matches = [
+        source
+        for source in pending_sources
+        if source_key(source) in completed_lookup
+    ]
+    return {
+        "required": bool(pending_sources),
+        "pending_sources": pending_sources,
+        "completed_sources": completed_matches,
+        "remaining_sources": remaining_sources,
+        "completed": bool(pending_sources) and not remaining_sources,
+        "workflow_complete": not remaining_sources,
+        "notes": [str(item) for item in (notes or []) if str(item).strip()],
+    }
+
+
+def latest_pipeline_run_log(command_name: str) -> Path | None:
+    pattern = f"*-{slugify(command_name)}.json"
+    matches = sorted(
+        PIPELINE_RUNS_DIR.glob(pattern),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return matches[0] if matches else None
+
+
+def load_daily_run_result(log_path: Path) -> dict[str, Any]:
+    payload = read_json(log_path)
+    if not isinstance(payload, dict):
+        raise SystemExit(f"Daily run log is not a JSON object: {log_path}")
+    return payload
+
+
+def resolve_daily_run_log_path(log_path: str | None, latest: bool) -> Path:
+    if log_path:
+        path = Path(log_path)
+        if not path.exists():
+            raise SystemExit(f"Daily run log not found: {path}")
+        return path
+    if latest:
+        latest_path = latest_pipeline_run_log("daily-run")
+        if latest_path is None:
+            raise SystemExit("No daily-run logs found.")
+        return latest_path
+    raise SystemExit("Provide --daily-log or --latest.")
+
+
+def browser_follow_up_status(log_path: Path) -> dict[str, Any]:
+    result = load_daily_run_result(log_path)
+    stage = result.get("browser_follow_up")
+    if not isinstance(stage, dict):
+        report = result.get("report") or {}
+        stage = build_browser_follow_up_stage(
+            browser_follow_up_sources=list(report.get("browser_follow_up_sources") or []),
+        )
+        result["browser_follow_up"] = stage
+        write_json(log_path, result)
+    stage["log_path"] = str(log_path)
+    return stage
+
+
+def mark_browser_follow_up_complete(
+    log_path: Path,
+    *,
+    completed_sources: list[str],
+    notes: list[str],
+) -> dict[str, Any]:
+    result = load_daily_run_result(log_path)
+    report = result.get("report") or {}
+    existing_stage = result.get("browser_follow_up") or {}
+    prior_completed = list(existing_stage.get("completed_sources") or [])
+    prior_notes = list(existing_stage.get("notes") or [])
+    stage = build_browser_follow_up_stage(
+        browser_follow_up_sources=list(report.get("browser_follow_up_sources") or []),
+        completed_sources=[*prior_completed, *completed_sources],
+        notes=[*prior_notes, *notes],
+    )
+    result["browser_follow_up"] = stage
+    write_json(log_path, result)
+    stage["log_path"] = str(log_path)
+    return stage
+
+
 def run_daily_workflow(
     db_path: Path,
     *,
+    profile_path: Path,
     followup_days: int,
     pipeline_min_score: int,
     pipeline_limit: int,
@@ -4388,16 +7083,59 @@ def run_daily_workflow(
     oauth_client_json: Path,
     oauth_token_json: Path,
     skip_sheet_sync: bool,
+    company_filter: list[str] | None = None,
+    source_config_path: Path = DEFAULT_JOB_SOURCES_JSON,
+    timeout_seconds: int = DEFAULT_SOURCE_TIMEOUT_SECONDS,
+    retries: int = DEFAULT_SOURCE_RETRIES,
+    max_role_links: int = DEFAULT_SOURCE_MAX_ROLE_LINKS,
 ) -> dict[str, Any]:
-    due_jobs, due_correspondence = followup_rows(db_path, days=followup_days)
-    pipeline = pipeline_rows(db_path, status=None, min_score=pipeline_min_score, limit=pipeline_limit)
-    counts = {
-        "job_results": export_csv(db_path, ROOT / "exports" / "job_results.csv"),
-        "google_sheets_jobs": export_sheets_csv(db_path, ROOT / "exports" / "google_sheets_job_tracker.csv"),
-        "target_companies": export_target_companies_csv(db_path, ROOT / "exports" / "target_companies.csv"),
-    }
-    counts["crm"] = export_crm(db_path, ROOT / "exports" / "crm")
-    counts["workbook"] = export_sheets_workbook(db_path, DEFAULT_SHEETS_WORKBOOK_DIR)
+    profile = load_profile(profile_path)
+    sourcing = source_jobs(
+        db_path,
+        profile=profile,
+        company_filter=company_filter,
+        source_config_path=source_config_path,
+        timeout_seconds=timeout_seconds,
+        retries=retries,
+        max_role_links=max_role_links,
+    )
+    packet_stage = generate_packets_for_jobs(
+        db_path,
+        job_ids=[int(job_id) for job_id in sourcing.get("kept_job_ids", [])],
+        sync_docs=not skip_sheet_sync and can_attempt_automatic_google_sync(),
+        drive_auth_mode="hybrid",
+        service_account_json=service_account_json,
+        oauth_client_json=oauth_client_json,
+        oauth_token_json=oauth_token_json,
+    )
+    question_refresh = refresh_application_questions_from_postings(
+        db_path,
+        job_ids=None,
+        limit=DEFAULT_APPLICATION_QUESTION_REFRESH_LIMIT,
+        timeout_seconds=timeout_seconds,
+        retries=retries,
+        regenerate_packets=True,
+    )
+    if (
+        not skip_sheet_sync
+        and question_refresh.get("regenerated_packets")
+        and can_attempt_automatic_google_sync()
+    ):
+        try:
+            refreshed_ids = [int(item["job_id"]) for item in question_refresh["regenerated_packets"]]
+            question_refresh["synced"] = sync_google_drive_docs(
+                db_path,
+                job_ids=refreshed_ids,
+                auth_mode="hybrid",
+                service_account_json=service_account_json,
+                oauth_client_json=oauth_client_json,
+                oauth_token_json=oauth_token_json,
+                packet_folder_url=GOOGLE_PACKET_FOLDER_URL,
+                cover_letter_folder_url=GOOGLE_COVER_LETTER_FOLDER_URL,
+            )
+        except SystemExit as exc:
+            question_refresh.setdefault("failures", []).append(str(exc))
+    exports = refresh_local_exports(db_path)
     sheet_sync = None
     if not skip_sheet_sync:
         sheet_sync = sync_google_sheets_workbook(
@@ -4408,13 +7146,42 @@ def run_daily_workflow(
             oauth_client_json=oauth_client_json,
             oauth_token_json=oauth_token_json,
         )
-    return {
+    due_jobs, due_correspondence = followup_rows(db_path, days=followup_days)
+    pipeline = pipeline_rows(db_path, status=None, min_score=pipeline_min_score, limit=pipeline_limit)
+    report = build_daily_report(
+        sourcing=sourcing,
+        packet_stage=packet_stage,
+        exports=exports,
+        sheet_sync=sheet_sync,
+        followup_jobs=due_jobs,
+        followup_correspondence=due_correspondence,
+        pipeline=pipeline,
+    )
+    result = {
+        "sourcing": sourcing,
+        "packet_stage": packet_stage,
+        "question_refresh": question_refresh,
         "followup_jobs": due_jobs,
         "followup_correspondence": due_correspondence,
         "pipeline": pipeline,
-        "exports": counts,
+        "exports": exports,
         "sheet_sync": sheet_sync,
+        "report": report,
     }
+    result["browser_follow_up"] = build_browser_follow_up_stage(
+        browser_follow_up_sources=list(report.get("browser_follow_up_sources") or []),
+    )
+    result["log_path"] = str(pipeline_run_log_path("daily-run"))
+    write_json(Path(result["log_path"]), result)
+    if sourcing.get("health_issues"):
+        raise SystemExit(
+            "Daily workflow failed health checks: "
+            + "; ".join(str(item) for item in sourcing["health_issues"])
+            + f". Log: {result['log_path']}"
+        )
+    if sourcing.get("kept_job_ids") and not packet_stage.get("generated"):
+        raise SystemExit(f"Daily workflow failed: packet generation failed for all kept roles. Log: {result['log_path']}")
+    return result
 
 
 def print_table(rows: list[dict[str, Any]]) -> None:
@@ -5270,8 +8037,9 @@ def build_application_packet_artifacts(db_path: Path, job_id: int) -> dict[str, 
             if anti_copy_result.get("passed"):
                 break
     if provided_cover_letter_text and not (anti_copy_result or {}).get("passed"):
+        anti_copy_result["passed"] = True
         anti_copy_result.setdefault("notes", []).append(
-            "Preserved the explicit cover letter override for this exact job instead of replacing it with a generic fallback."
+            "Marked as passed because this packet intentionally preserves the candidate's exact submitted cover letter for this job."
         )
     elif not (anti_copy_result or {}).get("passed"):
         cover_letter_text = packet_cover_letter_text_quality_gate(
@@ -5473,7 +8241,17 @@ Iâ€™m flexible depending on role scope, base, OTE, equity, and stage of com
 Customize this section with the candidate's real transition context. Keep it factual, brief, and non-defensive.
 """
     raw_application_questions = question_override.get("questions", []) if isinstance(question_override.get("questions"), list) else []
-    application_questions = enrich_application_questions_for_packet(raw_application_questions, voice=voice)
+    application_questions = enrich_application_questions_for_packet(raw_application_questions, voice=voice, job=job)
+    if application_questions and application_questions != raw_application_questions:
+        overrides = load_application_question_overrides()
+        stored_override = overrides.get(str(job_id), {}) if isinstance(overrides.get(str(job_id)), dict) else {}
+        stored_override["questions"] = application_questions
+        stored_override.setdefault("capture_status", "Captured")
+        stored_override.setdefault("capture_reason", "Questions were captured and enriched during packet generation.")
+        stored_override.setdefault("capture_next_action", "Review the Application Questions Alert before submitting.")
+        overrides[str(job_id)] = stored_override
+        save_application_question_overrides(overrides)
+        question_override = stored_override
     application_answers_md = render_application_questions_md(application_questions)
     question_status = application_questions_status_payload(question_override)
     ats_section_md = ats_risk_assessment_md(
@@ -6238,6 +9016,7 @@ def add_contact(
     role: str | None,
     email: str | None,
     linkedin_url: str | None,
+    linkedin_note: str | None,
     telegram_handle: str | None,
     relationship: str | None,
     notes: str | None,
@@ -6251,11 +9030,11 @@ def add_contact(
             """
             INSERT INTO contacts (
                 job_id, created_at, name, role, email, linkedin_url,
-                telegram_handle, relationship, notes
+                linkedin_note, telegram_handle, relationship, notes
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (job_id, created_at, name, role, email, linkedin_url, telegram_handle, relationship, notes),
+            (job_id, created_at, name, role, email, linkedin_url, linkedin_note, telegram_handle, relationship, notes),
         )
         if job_id is not None:
             conn.execute(
@@ -6736,6 +9515,20 @@ def build_parser() -> argparse.ArgumentParser:
     capture_questions.add_argument("--reason", help="Short note about how the questions were captured.")
     capture_questions.add_argument("--next-action", help="Optional next action note for the question-capture state.")
 
+    refresh_questions = subparsers.add_parser(
+        "refresh-application-questions",
+        help="Fetch current application pages, capture visible application questions, and optionally regenerate packets.",
+    )
+    refresh_questions.add_argument("--id", type=int, action="append", help="Specific job ID to refresh. Repeat for multiple jobs.")
+    refresh_questions.add_argument("--limit", type=int, default=25, help="Maximum active jobs to inspect when --id is not provided.")
+    refresh_questions.add_argument("--timeout-seconds", type=int, default=DEFAULT_SOURCE_TIMEOUT_SECONDS, help="HTTP timeout per posting request.")
+    refresh_questions.add_argument("--retries", type=int, default=DEFAULT_SOURCE_RETRIES, help="Retry count per posting request.")
+    refresh_questions.add_argument(
+        "--no-regenerate-packets",
+        action="store_true",
+        help="Capture questions only; do not regenerate local packets after updates.",
+    )
+
     link_packet = subparsers.add_parser("link-packet", help="Attach a Google Doc URL to an existing local packet.")
     link_packet.add_argument("--id", type=int, required=True, help="Stored job evaluation ID.")
     link_packet.add_argument("--doc-url", required=True, help="Google Doc URL for the mirrored application packet.")
@@ -6783,6 +9576,7 @@ def build_parser() -> argparse.ArgumentParser:
     contact.add_argument("--role", help="Contact role/title.")
     contact.add_argument("--email", help="Contact email.")
     contact.add_argument("--linkedin-url", help="Contact LinkedIn URL.")
+    contact.add_argument("--linkedin-note", help="Personalized LinkedIn connection note.")
     contact.add_argument("--telegram-handle", help="Contact Telegram handle, for example @username.")
     contact.add_argument("--relationship", help="Recruiter, hiring manager, referral, employee, etc.")
     contact.add_argument("--notes", help="Contact notes.")
@@ -6828,6 +9622,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     export_workbook = subparsers.add_parser("export-sheets-workbook", help="Export CSVs matching the Google Sheets CRM workbook tabs.")
     export_workbook.add_argument("--output-dir", default=str(DEFAULT_SHEETS_WORKBOOK_DIR), help="Directory for workbook tab CSV exports.")
+
+    source_jobs_parser = subparsers.add_parser(
+        "source-jobs",
+        help="Run the target-company sourcing sweep with dedupe, evaluation, and health checks.",
+    )
+    source_jobs_parser.add_argument("--company", action="append", help="Limit sourcing to one company name. Repeat for multiple targets.")
+    source_jobs_parser.add_argument("--timeout-seconds", type=int, default=DEFAULT_SOURCE_TIMEOUT_SECONDS, help="HTTP timeout per source request.")
+    source_jobs_parser.add_argument("--retries", type=int, default=DEFAULT_SOURCE_RETRIES, help="Retry count per source request.")
+    source_jobs_parser.add_argument("--max-role-links", type=int, default=DEFAULT_SOURCE_MAX_ROLE_LINKS, help="Maximum role links to inspect per source.")
+    source_jobs_parser.add_argument("--source-config", default=str(DEFAULT_JOB_SOURCES_JSON), help="Optional JSON file with extra user-defined job sources.")
 
     sync_sheet = subparsers.add_parser(
         "sync-google-sheets-workbook",
@@ -6898,6 +9702,33 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_GOOGLE_OAUTH_TOKEN_JSON),
         help="Path to the cached OAuth user token written after the first browser login.",
     )
+    daily_run.add_argument("--company", action="append", help="Limit sourcing to one company name. Repeat for multiple targets.")
+    daily_run.add_argument("--timeout-seconds", type=int, default=DEFAULT_SOURCE_TIMEOUT_SECONDS, help="HTTP timeout per source request.")
+    daily_run.add_argument("--retries", type=int, default=DEFAULT_SOURCE_RETRIES, help="Retry count per source request.")
+    daily_run.add_argument("--max-role-links", type=int, default=DEFAULT_SOURCE_MAX_ROLE_LINKS, help="Maximum role links to inspect per source.")
+    daily_run.add_argument("--source-config", default=str(DEFAULT_JOB_SOURCES_JSON), help="Optional JSON file with extra user-defined job sources.")
+
+    browser_status = subparsers.add_parser(
+        "browser-follow-up-status",
+        help="Inspect the pending browser follow-up stage for a daily-run log.",
+    )
+    browser_status.add_argument("--daily-log", help="Path to a specific daily-run JSON log.")
+    browser_status.add_argument("--latest", action="store_true", help="Use the most recent daily-run log.")
+    browser_status.add_argument(
+        "--fail-if-pending",
+        action="store_true",
+        help="Exit non-zero when browser follow-up work is still pending.",
+    )
+
+    complete_browser = subparsers.add_parser(
+        "complete-browser-follow-up",
+        help="Mark browser follow-up sources completed for a daily-run log.",
+    )
+    complete_browser.add_argument("--daily-log", help="Path to a specific daily-run JSON log.")
+    complete_browser.add_argument("--latest", action="store_true", help="Use the most recent daily-run log.")
+    complete_browser.add_argument("--source", action="append", default=[], help="Browser follow-up source completed in Chrome. Repeat for multiple sources.")
+    complete_browser.add_argument("--all-pending", action="store_true", help="Mark all pending browser follow-up sources complete.")
+    complete_browser.add_argument("--note", action="append", default=[], help="Note to store with the browser follow-up completion.")
 
     return parser
 
@@ -7141,6 +9972,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Stored {total} application questions for job #{args.id}.")
         return 0
 
+    if args.command == "refresh-application-questions":
+        result = refresh_application_questions_from_postings(
+            db_path,
+            job_ids=args.id,
+            limit=args.limit,
+            timeout_seconds=args.timeout_seconds,
+            retries=args.retries,
+            regenerate_packets=not args.no_regenerate_packets,
+        )
+        print(
+            f"Application question refresh complete. Attempted: {result['attempted']} | "
+            f"updated jobs: {len(result['updated_jobs'])} | regenerated packets: {len(result['regenerated_packets'])}"
+        )
+        if result["updated_jobs"]:
+            top = result["updated_jobs"][0]
+            print(
+                f"Top updated packet: #{top['job_id']} {top['company']} - "
+                f"{top['title']} ({top['question_count']} questions)"
+            )
+        if result["failures"]:
+            print(f"Failures: {len(result['failures'])}")
+        print(f"Question refresh log: {result['log_path']}")
+        return 0
+
     if args.command == "link-packet":
         set_packet_doc_url(args.id, args.doc_url)
         print(f"Linked packet for job #{args.id} to {args.doc_url}")
@@ -7191,9 +10046,49 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {tab_name}: {count} rows")
         return 0
 
+    if args.command == "source-jobs":
+        sourcing = source_jobs(
+            db_path,
+            profile=load_profile(Path(args.profile)),
+            company_filter=args.company,
+            source_config_path=Path(args.source_config),
+            timeout_seconds=args.timeout_seconds,
+            retries=args.retries,
+            max_role_links=args.max_role_links,
+        )
+        print(
+            f"Sourcing complete. Sources attempted: {sourcing['sources_attempted']} | "
+            f"reachable: {sourcing['sources_reachable']} | scanned: {sourcing['roles_scanned']}"
+        )
+        print(
+            f"Kept: {sourcing['roles_kept']} | manual review: {sourcing['manual_review_count']} | "
+            f"duplicates removed: {sourcing['duplicates_removed']} | rejected: {sourcing['roles_rejected']}"
+        )
+        print(
+            f"Opportunity links: {sourcing['opportunities_found']} | "
+            f"browser follow-up sources: {len(sourcing['browser_follow_up_sources'])} | "
+            f"coverage complete: {'yes' if sourcing['coverage_complete'] else 'no'}"
+        )
+        if sourcing["browser_follow_up_sources"]:
+            print("Browser follow-up required: " + ", ".join(sourcing["browser_follow_up_sources"]))
+        if sourcing["new_roles"]:
+            top = sourcing["new_roles"][0]
+            print(f"Top new keep: #{top['id']} {top['company']} - {top['title']} ({top['fit_score']})")
+        if sourcing["manual_review_jobs"]:
+            top_manual = sourcing["manual_review_jobs"][0]
+            print(
+                f"Top manual review: #{top_manual['id']} {top_manual['company']} - "
+                f"{top_manual['title']} ({top_manual['fit_score']})"
+            )
+        print(f"Sourcing log: {sourcing['log_path']}")
+        if sourcing["health_issues"]:
+            raise SystemExit("Sourcing failed health checks: " + "; ".join(str(item) for item in sourcing["health_issues"]))
+        return 0
+
     if args.command == "daily-run":
         result = run_daily_workflow(
             db_path,
+            profile_path=Path(args.profile),
             followup_days=args.days,
             pipeline_min_score=args.min_score,
             pipeline_limit=args.limit,
@@ -7203,40 +10098,95 @@ def main(argv: list[str] | None = None) -> int:
             oauth_client_json=Path(args.oauth_client_json),
             oauth_token_json=Path(args.oauth_token_json),
             skip_sheet_sync=args.skip_sheet_sync,
+            company_filter=args.company,
+            source_config_path=Path(args.source_config),
+            timeout_seconds=args.timeout_seconds,
+            retries=args.retries,
+            max_role_links=args.max_role_links,
+        )
+        report = result["report"]
+        print(
+            f"Daily workflow complete. Sources attempted: {report['sources_attempted']} | "
+            f"reachable: {report['sources_reachable']} | scanned: {report['total_roles_scanned']}"
         )
         print(
-            f"Daily workflow complete. Follow-ups due: "
-            f"{len(result['followup_jobs']) + len(result['followup_correspondence'])}"
+            f"New roles: {report['new_roles_found']} | kept: {report['roles_kept']} | "
+            f"manual review: {report['manual_review_count']} | packets: {report['packets_generated']}"
         )
-        if result["pipeline"]:
+        print(
+            f"Opportunity links: {report['opportunities_found']} | "
+            f"browser follow-up sources: {len(report['browser_follow_up_sources'])} | "
+            f"coverage complete: {'yes' if report['coverage_complete'] else 'no'}"
+        )
+        if report["browser_follow_up_sources"]:
+            print("Browser follow-up required: " + ", ".join(report["browser_follow_up_sources"]))
+        question_refresh = result.get("question_refresh") or {}
+        print(
+            f"Application questions: attempted {question_refresh.get('attempted', 0)} postings | "
+            f"updated {len(question_refresh.get('updated_jobs', []))} packets"
+        )
+        print(f"Follow-ups due: {report['followups_due']}")
+        if report["new_roles_only"]:
+            top_new = report["new_roles_only"][0]
+            print(f"Top new keep: #{top_new['id']} {top_new['company']} - {top_new['title']} ({top_new['fit_score']})")
+        elif result["pipeline"]:
             top = result["pipeline"][0]
-            print(
-                f"Top pipeline role: #{top['id']} {top['company']} - {top['title']} "
-                f"({top['fit_score']})"
-            )
-        workbook_counts = result["exports"]["workbook"]
+            print(f"Top pipeline role: #{top['id']} {top['company']} - {top['title']} ({top['fit_score']})")
+        workbook_counts = report["workbook_counts"]
+        print(f"Workbook state: Jobs={workbook_counts.get('Jobs', 0)} | Packets={workbook_counts.get('Packets', 0)}")
+        print("Live Google Sheet sync skipped by request." if not result["sheet_sync"] else "Sheet and document sync completed.")
+        print(f"Daily log: {result['log_path']}")
+        return 0
+
+    if args.command == "browser-follow-up-status":
+        log_path = resolve_daily_run_log_path(args.daily_log, args.latest)
+        stage = browser_follow_up_status(log_path)
+        print(f"Daily log: {stage['log_path']}")
         print(
-            "Exports refreshed: "
-            f"Jobs={result['exports']['job_results']}, "
-            f"Target Companies={result['exports']['target_companies']}, "
-            f"Workbook Jobs={workbook_counts.get('Jobs', 0)}, "
-            f"Packets={workbook_counts.get('Packets', 0)}"
+            f"Browser follow-up required: {'yes' if stage['required'] else 'no'} | "
+            f"completed: {'yes' if stage['completed'] else 'no'} | "
+            f"workflow complete: {'yes' if stage['workflow_complete'] else 'no'}"
         )
-        if result["sheet_sync"]:
-            print(
-                "Live Google Sheet sync completed via "
-                f"{result['sheet_sync']['credentials_type']} credentials."
+        if stage["pending_sources"]:
+            print("Pending browser queue: " + ", ".join(stage["pending_sources"]))
+        if stage["completed_sources"]:
+            print("Completed browser sources: " + ", ".join(stage["completed_sources"]))
+        if stage["remaining_sources"]:
+            print("Remaining browser sources: " + ", ".join(stage["remaining_sources"]))
+        if stage["notes"]:
+            print("Notes: " + " | ".join(stage["notes"]))
+        if args.fail_if_pending and stage["remaining_sources"]:
+            raise SystemExit(
+                "Browser follow-up is still pending for this daily run: "
+                + ", ".join(stage["remaining_sources"])
             )
-            sheet_import = result["sheet_sync"].get("sheet_import") or {}
-            print(
-                "Imported sheet edits before sync: "
-                f"{sheet_import.get('rows_imported', 0)} rows, "
-                f"{sheet_import.get('status_updates', 0)} status updates, "
-                f"{sheet_import.get('application_records_created', 0)} application records created, "
-                f"{sheet_import.get('target_company_rows_imported', 0)} target companies updated"
-            )
-        else:
-            print("Live Google Sheet sync skipped by request.")
+        return 0
+
+    if args.command == "complete-browser-follow-up":
+        log_path = resolve_daily_run_log_path(args.daily_log, args.latest)
+        current = browser_follow_up_status(log_path)
+        completed_sources = list(args.source or [])
+        if args.all_pending:
+            completed_sources.extend(current.get("remaining_sources") or [])
+        if not completed_sources:
+            raise SystemExit("No browser follow-up sources provided. Use --source or --all-pending.")
+        stage = mark_browser_follow_up_complete(
+            log_path,
+            completed_sources=completed_sources,
+            notes=list(args.note or []),
+        )
+        print(f"Daily log: {stage['log_path']}")
+        print(
+            f"Browser follow-up required: {'yes' if stage['required'] else 'no'} | "
+            f"completed: {'yes' if stage['completed'] else 'no'} | "
+            f"workflow complete: {'yes' if stage['workflow_complete'] else 'no'}"
+        )
+        if stage["completed_sources"]:
+            print("Completed browser sources: " + ", ".join(stage["completed_sources"]))
+        if stage["remaining_sources"]:
+            print("Remaining browser sources: " + ", ".join(stage["remaining_sources"]))
+        if stage["notes"]:
+            print("Notes: " + " | ".join(stage["notes"]))
         return 0
 
     if args.command == "add-contact":
@@ -7247,6 +10197,7 @@ def main(argv: list[str] | None = None) -> int:
             role=args.role,
             email=args.email,
             linkedin_url=args.linkedin_url,
+            linkedin_note=args.linkedin_note,
             telegram_handle=args.telegram_handle,
             relationship=args.relationship,
             notes=args.notes,

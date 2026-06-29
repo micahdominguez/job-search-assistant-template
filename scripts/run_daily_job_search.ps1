@@ -52,7 +52,7 @@ if ($oauthTokenJson) {
     $sheetArgs += @("--oauth-token-json", $oauthTokenJson)
 }
 
-Write-Host "Running daily job-search refresh with explicit local export step..."
+Write-Host "Running daily job-search pipeline with sourcing, evaluation, packets, and local exports..."
 $dailyExitCode = Invoke-PythonCommand -Arguments $dailyArgs
 if ($dailyExitCode -ne 0) {
     exit $dailyExitCode
@@ -66,5 +66,15 @@ if ($sheetExitCode -ne 0) {
 }
 
 Write-Host ""
-Write-Host "Daily workflow completed: local refresh succeeded and live Google Sheet sync completed."
+Write-Host "Checking whether browser follow-up is still pending for this run..."
+$browserStatusArgs = @(".\job_search_assistant.py", "browser-follow-up-status", "--latest", "--fail-if-pending")
+$browserExitCode = Invoke-PythonCommand -Arguments $browserStatusArgs
+if ($browserExitCode -ne 0) {
+    Write-Host ""
+    Write-Host "Daily workflow is not fully complete yet: CLI search and Sheet sync finished, but browser follow-up is still pending."
+    exit $browserExitCode
+}
+
+Write-Host ""
+Write-Host "Daily workflow completed: CLI search, browser follow-up state, and live Google Sheet sync are all complete."
 exit 0

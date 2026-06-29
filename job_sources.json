@@ -1,0 +1,32 @@
+{
+  "notes": [
+    "Optional extra job sources for your own search.",
+    "Set enabled to true when you want a source included in source-jobs and daily-run.",
+    "Use browser_required true for sites that need login, saved filters, heavy JavaScript, or Chrome verification."
+  ],
+  "sources": [
+    {
+      "enabled": false,
+      "company": "Example AI Portfolio Jobs",
+      "tier": 2,
+      "source_type": "discovery_board",
+      "url": "https://example.com/ai-jobs",
+      "browser_required": true
+    },
+    {
+      "enabled": false,
+      "company": "Example Robotics Company",
+      "tier": 2,
+      "source_type": "careers_page",
+      "url": "https://example.com/careers"
+    },
+    {
+      "enabled": false,
+      "company": "Example Cybersecurity Board",
+      "tier": 2,
+      "source_type": "discovery_board",
+      "url": "https://example.com/security-jobs",
+      "browser_required": true
+    }
+  ]
+}

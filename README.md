@@ -54,6 +54,8 @@ You do not need to memorize these right away. This is just the simple version:
   This is where you can store good past writing samples.
 - `JOB_FINDER_SYSTEM_PROMPT.md`
   This helps shape how the system thinks about good job matches.
+- `job_sources.json`
+  This is the easiest place to add your own company career pages and job boards without editing Python.
 
 If you want the lightest possible start, focus on `profile.md` and `profile.json` first.
 
@@ -97,6 +99,42 @@ If you plan to use packet generation heavily later, run this after your first se
 
 That script points out remaining example text inside `job_search_assistant.py` that should be adjusted to better match your own background.
 
+## Choose Your Search Sources
+
+The template includes a built-in source list, but you should add sources that match your target market.
+
+For a non-technical setup, open `job_sources.json`. Each source has:
+
+- `enabled`: set this to `true` when you want the source included.
+- `company`: the name you want shown in logs.
+- `tier`: use `1` for must-check sources, `2` for useful sources, and `3` for secondary discovery.
+- `source_type`: use `careers_page` for a normal company page, `discovery_board` for a job board, or an ATS-specific value like `ashby_board`, `greenhouse_board`, `lever_board`, `gem_board`, or `rippling_board`.
+- `url`: the job board or company career page.
+- `browser_required`: set to `true` when the source needs login, saved filters, heavy JavaScript, or Chrome verification.
+
+Example:
+
+```json
+{
+  "enabled": true,
+  "company": "Example AI Jobs",
+  "tier": 2,
+  "source_type": "discovery_board",
+  "url": "https://example.com/ai-jobs",
+  "browser_required": true
+}
+```
+
+Good starter source packs:
+
+- AI and data infrastructure: direct company pages, Ashby/Greenhouse/Lever boards, Wellfound, Built In, a16z portfolio jobs, and AI-focused portfolio boards.
+- Robotics and autonomy: direct company pages, Wellfound, Built In, LinkedIn saved searches, defense/dual-use portfolio boards, and robotics company career pages.
+- Web3 and crypto: Web3.career, CryptoJobsList, Cryptocurrency Jobs, Remote3, Stablecoin Jobs, JobStash, Solana Jobs, Avalanche Jobs, Ethereum Job Board, Superteam Earn, and crypto venture portfolio boards.
+- Cybersecurity: direct company pages, Greenhouse/Lever/Ashby boards, Wellfound, Built In, LinkedIn saved searches, Vanta, Wiz, Snyk, HiddenLayer, Flashpoint, TRM Labs, Halborn, and Chainalysis.
+- Payments, fintech, and stablecoins: issuer, wallet, exchange, custody, tokenization, payment infrastructure, and fintech venture portfolio boards.
+
+The daily run should use Chrome as a second pass for sources marked `browser_required`. Run the CLI sweep first, check the browser queue, then complete those sources in Chrome.
+
 ## First Local Test
 
 Try these in order:
@@ -123,6 +161,12 @@ Run a simple local-only refresh:
 
 ```powershell
 python .\job_search_assistant.py daily-run --skip-sheet-sync
+```
+
+Check whether Chrome follow-up is pending:
+
+```powershell
+python .\job_search_assistant.py browser-follow-up-status --latest
 ```
 
 If those work, the local setup is in good shape.
@@ -229,6 +273,12 @@ If you only want local tracking, keep using:
 
 ```powershell
 python .\job_search_assistant.py daily-run --skip-sheet-sync
+```
+
+If a daily run reports pending browser follow-up, use Chrome to check those sources and then mark completed sources:
+
+```powershell
+python .\job_search_assistant.py complete-browser-follow-up --latest --source "Web3.career" --note "Checked in Chrome; no new qualified roles."
 ```
 
 ### Optional Google Drive Packet Sync

@@ -99,6 +99,15 @@ Once your own workbook URL and credentials are working, use the wrapper for the 
 .\scripts\run_daily_job_search.ps1 --spreadsheet-url "https://docs.google.com/spreadsheets/d/<YOUR_SHEET_ID>/edit" --sheet-auth-mode oauth
 ```
 
+If the wrapper reports pending browser follow-up, the spreadsheet has synced but the search pass still needs Chrome checks:
+
+```powershell
+python .\job_search_assistant.py browser-follow-up-status --latest
+python .\job_search_assistant.py complete-browser-follow-up --latest --source "Web3.career" --note "Checked in Chrome; no new qualified roles."
+```
+
+Use fresh Chrome tabs for browser follow-up sources, especially login-gated job boards, saved searches, JavaScript-heavy pages, and portfolio job boards.
+
 ## Manual Job Add Workflow
 
 When you find a job yourself, paste it into your analysis workflow first, then import the structured output:
